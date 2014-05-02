@@ -1,11 +1,18 @@
 package de.hpi.krestel.mySearchEngine;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.List;
 
 import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 
+import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.analysis.TokenStream;
+import org.apache.lucene.analysis.de.GermanAnalyzer;
+import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
+import org.apache.lucene.util.Version;
 import org.xml.sax.Attributes;
 import org.xml.sax.SAXException;
 import org.xml.sax.helpers.DefaultHandler;
@@ -19,6 +26,9 @@ import org.xml.sax.helpers.DefaultHandler;
  *  - index algorithm?
  *  - etc.  
  * 
+ * - Apache Lucene GermanAnalyzer
+ *   is used for tokenizing, stemming, stopword removal
+ *   (see http://lucene.apache.org/core/4_7_2/analyzers-common/org/apache/lucene/analysis/de/GermanAnalyzer.html
  */
 
 public class SearchEngineRetrEvil extends SearchEngine {
@@ -38,12 +48,82 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		
 		private String dir;
 		
+		private Analyzer analyzer;
+		
 		public Indexer(String dir) {
 			this.dir = dir;
+			this.analyzer = this.createAnalyzer();
+		}
+		
+		// Get the Lucene Analyser to be used
+		private Analyzer createAnalyzer() {
+			/* 
+			 * Specify the compatibility version. Influences the behaviour of
+			 * components. See 
+			 * http://lucene.apache.org/core/4_7_2/analyzers-common/org/apache/
+			 * 	lucene/analysis/de/GermanAnalyzer.html#GermanAnalyzer
+			 * 	%28org.apache.lucene.util.Version%29
+			 */
+			Version version = Version.LUCENE_47;	// newest version
+			
+			/* 
+			 * Create and return the analyzer with the given compatibility version.
+			 * As of version 3.1, Snowball stopwords are used per default (can
+			 * be accessed via GermanAnalyzer.getDefaultStopSet());
+			 */
+			Analyzer analyzer = new GermanAnalyzer(version);
+			
+			return analyzer;
+		}
+		
+		/* 
+		 * Pre-process raw text, i.e., tokenize, stem, use stopword list.
+		 * Return a list of terms. See
+		 * https://lucene.apache.org/core/4_7_2/core/org/apache/
+		 * 	lucene/analysis/package-summary.html
+		 */
+		private List<String> processRawText(String text) throws IOException {
+			/* 
+			 * Create the event stream; subsequent calls to analyzer.tokenStream
+			 * will return the same stream; "fieldName" should not be relevant for
+			 * our case (refers to segments of documents in normal applications 
+			 * of the Lucene framework).
+			 * There are several attributes which can be accessed during streaming.
+			 * CharTermAttribute refers to the string values of terms in the text
+			 * which is the only thing that is of interest for us.
+			 */
+			TokenStream stream = this.analyzer.tokenStream("fieldName", text);
+			CharTermAttribute termAtt = stream.addAttribute(CharTermAttribute.class);
+			
+			// initiate the list with an initial capacity of 1000
+			List<String> terms = new ArrayList<String>(1000);
+			
+			try {
+				stream.reset();	// necessary for subsequent calls to analyzer.tokenStream
+				while (stream.incrementToken()) {	// proceed to the next term
+					terms.add(termAtt.toString());	// get the term
+				}
+				stream.end();
+			} finally {
+				stream.close();
+			}
+			
+			return terms;
 		}
 		
 		public void indexPage(Long id, String title, String text) {
 			// TODO: implement
+			System.out.println("### page: " + id + " - " + title);
+			try {
+				List<String> terms = this.processRawText(text);
+				System.out.println("# terms: " + terms.size());
+				for (String term : terms) {
+					System.out.print(term + " ");
+				}
+				System.out.println();
+			} catch (IOException e) {
+				log("Could not index page " + id + ": " + e.getMessage());
+			}
 		}
 		
 		public void mergeIndices() {
@@ -149,9 +229,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				this.endPage();
 			} else if (this.inTitle && qName.equalsIgnoreCase("title")) {
 				this.inTitle = false;
-			} else if (this.inPage && qName.equalsIgnoreCase("ns")) {
+			} else if (this.inNs && qName.equalsIgnoreCase("ns")) {
 				this.inNs = false;
-			} else if (this.inTitle && qName.equalsIgnoreCase("id")) {
+			} else if (this.inId && qName.equalsIgnoreCase("id")) {
 				this.inId = false;
 			} else if (this.inText && qName.equalsIgnoreCase("text")) {
 				this.inText = false;
@@ -172,8 +252,8 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					 */
 					this.isArticle = true;
 				}	// else: page is not an article and, therefore, irrelevant
-			} else if (this.inId) {
-				// try to get the id as a Long
+			} else if (this.inId && this.id == null) {
+				// try to get the page id (subsequent ids are from revisions) as a Long
 				try {
 					this.id = Long.parseLong(new String(ch, start, length));
 				} catch (NumberFormatException e) {
@@ -201,7 +281,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 */
 	@Override
 	void index(String dir) {
-		this.log("abort: dir is null");
+		if (dir == null) {
+			this.log("abort: dir is null");
+			return;
+		}
 		
 		// get dump file TODO: make that more general
 		String dumpFile = new File(dir).getParent() + "/" + "testDump.xml";

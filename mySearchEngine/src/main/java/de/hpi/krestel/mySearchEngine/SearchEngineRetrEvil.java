@@ -1,5 +1,6 @@
 package de.hpi.krestel.mySearchEngine;
 
+import java.io.EOFException;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -7,6 +8,8 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.StringTokenizer;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
@@ -38,6 +41,11 @@ import org.xml.sax.helpers.DefaultHandler;
 
 public class SearchEngineRetrEvil extends SearchEngine {
 	
+	/**
+	 * Index handler for queries etc.
+	 */
+	private IndexHandler indexHandler;
+	
 	public SearchEngineRetrEvil() {
 		// This should stay as is! Don't add anything here!
 		super();	
@@ -52,7 +60,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * 
 	 * TODO: implement merging of Index / TermList parts
 	 */
-	private class Index {
+	private static class Index {
 		
 		/**
 		 * A TermList is a inverted list, i.e., a list of documents and
@@ -68,7 +76,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 * 
 		 * TODO: implement delta encoding for document ids and positions
 		 */
-		public class TermList {
+		public static class TermList {
 			
 			/**
 			 * The map of occurrences for this list's term.
@@ -84,6 +92,45 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			 */
 			public TermList() {
 				this.occurrences = new TreeMap<Long, Collection<Long>>();
+			}
+			
+			/**
+			 * Create a TermList from parsing a String read from an index file.
+			 * @param string the string to be parsed
+			 * @return a TermList
+			 */
+			public static TermList createFromIndexString(String string) {
+				TermList list = new TermList();
+				
+				// format: doc:pos,pos,pos;doc:pos,pos,pos[.]
+				StringTokenizer tok = new StringTokenizer(string, ":;.");
+				StringTokenizer innerTok;
+				Long docId = null;
+				String positions = null;
+				Long position = null;
+				boolean isDocId = true;
+				try {
+					while (tok.hasMoreTokens()) {
+						String token = tok.nextToken();
+						if (isDocId) {
+							docId = Long.parseLong(token);
+						} else {
+							positions = token;
+							// parse positions
+							innerTok = new StringTokenizer(positions, ",");
+							while (innerTok.hasMoreTokens()) {
+								position = Long.parseLong(innerTok.nextToken());
+								// add occurrence to the list
+								list.addOccurrence(docId, position);
+							}
+						}
+						isDocId = !isDocId;
+					}
+				} catch (NumberFormatException e) {
+					e.printStackTrace();
+				}
+				
+				return list;
 			}
 			
 			/**
@@ -178,6 +225,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				return result.toString();
 			}
 			
+			public Map<Long, Collection<Long>> getOccurrences() {
+				return this.occurrences;
+			}
+			
 		}
 		
 		private Map<String, TermList> termLists;
@@ -259,7 +310,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * 
 	 * TODO: implement writing / merging of Index parts to avoid memory problems
 	 */
-	private class Indexer {
+	private static class IndexHandler {
 		
 		// name of the file which stores the index
 		private static final String indexFileName = "index.txt";
@@ -288,12 +339,29 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 * Uses {@link TreeMap} for maps whose keys are ordered.
 		 * @param dir the directory for all index files
 		 */
-		public Indexer(String dir) {
+		public IndexHandler(String dir) {
+			// delegate to more general constructor
+			this(dir, false);
+		}
+		
+		/**
+		 * Create an Indexer with empty structures (load is <tt>false</tt>) or
+		 * attempt to initialize the Indexer using existent index files in the
+		 * given directory (load is <tt>true</tt>).
+		 * @param dir the directory for all index files
+		 * @param load whether to load existing index files or not
+		 */
+		public IndexHandler(String dir, boolean load) {
+			// set references, initialize structures
 			this.dir = dir;
 			this.analyzer = this.createAnalyzer();
 			this.index = new Index();
 			this.seeklist = new TreeMap<String, Long>();
 			this.titles = new TreeMap<Long, String>();
+			// load seeklist and mapping of titles, if so desired
+			if (load) {
+				this.loadIndex();
+			}
 		}
 		
 		/**
@@ -366,16 +434,14 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		/**
 		 * Add the id-title-mapping to the respective map.
 		 * Add the occurrences of all terms in the given text to the index.
-		 * If an IOException occurs, log it, but proceed.
+		 * If an IOException occurs, print it, but proceed.
 		 * @param id the id of the document
 		 * @param title the title of the document
 		 * @param text the text of the document
 		 */
 		public void indexPage(Long id, String title, String text) {
 			// note id - title - mapping
-			if (!this.titles.containsKey(id)) {
-				this.titles.put(id, title);
-			}
+			this.titles.put(id, title);
 			
 			try {
 				// process text (tokenizing, stopping, stemming)
@@ -387,7 +453,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				}
 			} catch (IOException e) {
 				// an IOException was thrown by the Analyzer
-				log("Could not index page " + id + ": " + e.getMessage());
+				e.printStackTrace();
 			}
 		}
 		
@@ -397,12 +463,12 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 * Creates the seeklist.
 		 * Writes the index, the seeklist and the id-titles-mapping to 
 		 * files (one file each).
-		 * If an IOException occurs, log it, but proceed.
+		 * If an IOException occurs, print it, but proceed.
 		 */
 		public void createIndex() {
 			try {
 				// get the index file; if it does already exist, delete it
-				File indexFile = this.getErasedFile(this.dir + Indexer.indexFileName);
+				File indexFile = this.getErasedFile(this.dir + IndexHandler.indexFileName);
 				/* 
 				 * get random access file for index with read / write, attempts 
 				 * to make nonexistent file
@@ -425,7 +491,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				 * write the seeklist to a file; it is not necessary to use 
 				 * RandomAccessFile here, but we just use the same pattern
 				 */
-				File seekListFile = this.getErasedFile(this.dir + Indexer.seekListFileName);
+				File seekListFile = this.getErasedFile(this.dir + IndexHandler.seekListFileName);
 				RandomAccessFile raSeekListFile = new RandomAccessFile(seekListFile, "rw");
 				raSeekListFile.writeChars(this.seekListToString());
 				raSeekListFile.close();
@@ -433,12 +499,12 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				/*
 				 * write the id-title-mapping to a file
 				 */
-				File titlesFile = this.getErasedFile(this.dir + Indexer.titlesFileName);
+				File titlesFile = this.getErasedFile(this.dir + IndexHandler.titlesFileName);
 				RandomAccessFile raTitlesFile = new RandomAccessFile(titlesFile, "rw");
 				raTitlesFile.writeChars(this.titlesToString());
 				raTitlesFile.close();
 			} catch (IOException e) {
-				log("Cannot create index files: " + e.getMessage());
+				e.printStackTrace();
 			}
 		}
 		
@@ -504,6 +570,186 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			return result.toString();
 		}
 		
+		/**
+		 * Load existing seek list and id-title-mapping. If the necessary files
+		 * are not present in the directory, log a message but proceed.
+		 * If an IOException occurs, print it, but proceed.
+		 */
+		private void loadIndex() {
+			try {
+				// load the seek list
+				File seekListFile = new File(this.dir + IndexHandler.seekListFileName);
+				RandomAccessFile raSeekListFile = new RandomAccessFile(seekListFile, "r");
+				
+				StringBuilder builder = new StringBuilder();
+				try {
+					while (true) {
+						builder.append(raSeekListFile.readChar());
+					}
+				} catch (EOFException e) {
+					// end of file: proceed
+				} finally {
+					raSeekListFile.close();
+				}
+				
+				this.parseSeekListFileString(builder.toString());
+				
+				// load the id-titles-mapping
+				File titlesFile = new File(this.dir + IndexHandler.titlesFileName);
+				RandomAccessFile raTitlesFile = new RandomAccessFile(titlesFile, "rw");
+				
+				builder = new StringBuilder();
+				try {
+					while (true) {
+						builder.append(raTitlesFile.readChar());
+					}
+				} catch (EOFException e) {
+					// end of file: proceed
+				} finally {
+					raTitlesFile.close();
+				}
+				
+				this.parseTitlesFileString(builder.toString());
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+		
+		/**
+		 * Construct a seek list from the read string. If an exception occurs,
+		 * print it, but proceed.
+		 * @param string seek list file string
+		 */
+		private void parseSeekListFileString(String string) {
+			StringTokenizer tok = new StringTokenizer(string, "\t");
+			
+			boolean isTerm = true;	// whether the current token is the term
+			String term = null;
+			Long offset = null;
+			
+			while (tok.hasMoreTokens()) {
+				String token = tok.nextToken();
+				try {
+					if (isTerm) {
+						// parse the term
+						term = token;
+					} else {
+						// parse the term's offset and add it to the map
+						offset = Long.parseLong(token);
+						this.seeklist.put(term, offset);
+					}
+					isTerm = !isTerm;
+				} catch (NumberFormatException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+		
+		/**
+		 * Construct an id-titles-mapping from the read string. If an exception occurs,
+		 * print it, but proceed.
+		 * @param string seek list file string
+		 */
+		private void parseTitlesFileString(String string) {
+			StringTokenizer tok = new StringTokenizer(string, "\t");
+			
+			boolean isId = true;	// whether the current token is the id
+			Long id = null;
+			String title = null;
+			
+			while (tok.hasMoreTokens()) {
+				String token = tok.nextToken();
+				try {
+					if (isId) {
+						// parse the term
+						id = Long.parseLong(token);
+					} else {
+						// parse the term's offset and add it to the map
+						title = token;
+						this.titles.put(id, title);
+					}
+					isId = !isId;
+				} catch (NumberFormatException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+		
+		/**
+		 * Tests whether the given directory has all necessary index files
+		 * (index file, seek list, id-title-mapping). If an IOException occurs,
+		 * return <tt>false</tt>.
+		 * @param dir the directory
+		 * @return <tt>true</tt> if all files are present and can be accessed, 
+		 * 	<tt>false</tt> otherwise
+		 */
+		public static boolean directoryHasIndexFiles(String dir) {
+			File indexFile = new File(dir + IndexHandler.indexFileName);
+			if (!indexFile.canRead()) {
+				return false;
+			}
+			File seekListFile = new File(dir + IndexHandler.seekListFileName);
+			if (!seekListFile.canRead()) {
+				return false;
+			}
+			File titlesFile = new File(dir + IndexHandler.titlesFileName);
+			if (!titlesFile.canRead()) {
+				return false;
+			}
+			// all files exist and can be read
+			return true;
+		}
+		
+		/**
+		 * Use the seek list to read the inverted list of the given term from
+		 * the index file.
+		 * If the term (which should be pre-processed) is not found in the 
+		 * seek list, or if an exception occurs, <tt>null</tt> is returned.
+		 * @param term the term
+		 * @return the read TermList or <tt>null</tt>, if the term is not known
+		 */
+		public Index.TermList readListForTerm(String term) {
+			if (this.seeklist.containsKey(term)) {
+				// get the offset
+				long offset = this.seeklist.get(term);
+				try {
+					// get the file
+					File seekListFile = new File(this.dir + IndexHandler.indexFileName);
+					RandomAccessFile raSeekListFile = new RandomAccessFile(seekListFile, "r");
+					
+					/* 
+					 * read the file until the list is finished (i.e., until the 
+					 * first '.' or end of file
+					 */
+					raSeekListFile.seek(offset);
+					StringBuilder builder = new StringBuilder();
+					try {
+						while (true) {
+							String character = String.valueOf(raSeekListFile.readChar());
+							builder.append(character);
+							if (character.equals(".")) {
+								break;
+							}
+						}
+					} catch (EOFException e) {
+						// continue
+					}
+					raSeekListFile.close();
+					
+					// create the TermList from the string
+					Index.TermList list = Index.TermList.createFromIndexString(builder.toString());
+					
+					return list;
+				} catch (IOException e) {
+					e.printStackTrace();
+					return null;
+				}
+			} else {
+				// term not known
+				return null;
+			}
+		}
+		
 	}
 	
 	/*
@@ -520,7 +766,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 */
 	private class SAXHandler extends DefaultHandler {
 
-		private Indexer indexer;		// builds the index
+		private IndexHandler indexer;		// builds the index
 		
 		private Long id;				// id of current page
 		private StringBuilder title;	// title of current page
@@ -534,7 +780,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			isRedirect, 				// whether the page is a redirection
 			inText = false;				// parsing <text>
 		
-		public SAXHandler(Indexer indexer) {
+		public SAXHandler(IndexHandler indexer) {
 			this.indexer = indexer;
 		}
 		
@@ -668,8 +914,11 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		// get dump file TODO: make that more general
 		String dumpFile = new File(dir).getParent() + "/" + "testDump.xml";
 
-		// create the indexer with the target dir
-		Indexer indexer = new Indexer(dir);
+		/* 
+		 * create the indexer with the target dir; this instance is only used for
+		 * creating the index, not for answering queries
+		 */
+		IndexHandler indexer = new IndexHandler(dir);
 		
 		try {
 			// get the SAX parser with the appropriate handler
@@ -684,15 +933,56 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	}
 
 	@Override
-	boolean loadIndex(String directory) {
-		// TODO Auto-generated method stub
-		return false;
+	boolean loadIndex(String dir) {
+		if (dir == null) {
+			this.log("abort: dir is null");
+			return false;
+		}
+		
+		// ensure that the dir path ends with a '/'
+		if (!dir.endsWith("/")) {
+			dir = dir.concat("/");
+		}
+		
+		// test whether the given directory has all necessary index files
+		if (!IndexHandler.directoryHasIndexFiles(dir)) {
+			// missing file(s): return false
+			return false;
+		}
+		// all files present => load index
+		this.indexHandler = new IndexHandler(dir, true);
+		return true;
 	}
 
 	@Override
 	ArrayList<String> search(String query, int topK, int prf) {
-		// TODO Auto-generated method stub
-		return null;
+		// week 1: simple keyword search
+		ArrayList<String> titles = new ArrayList<String>();
+		
+		try {
+			// preprocess the query
+			List<String> terms = this.indexHandler.processRawText(query);
+			System.out.println("# pre-processed term: " + terms.get(0));
+			
+			// find occurrences of the keyword (assume exactly one keyword here)
+			String term = terms.size() > 0 ? terms.get(0) : "trololol";
+			Index.TermList termList = this.indexHandler.readListForTerm(term);
+			System.out.println("# inverted list: " + termList);
+			
+			// get document titles for the document id(s)
+			if (termList != null) {	// is null if the term is not known or an error occurred
+				Set<Long> documentIds = termList.getOccurrences().keySet();
+				for (Long documentId : documentIds) {
+					String title = this.indexHandler.titles.get(documentId);
+					titles.add(title != null ? title : "- title for id " + documentId + " -");
+				}
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		
+		// return the titles
+		return titles;
 	}
 	
 	@Override

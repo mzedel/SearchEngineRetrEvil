@@ -11,7 +11,7 @@ package de.hpi.krestel.mySearchEngine;
 public class SearchEngineTest {
 
 	// Some test queries for development. The real test queries will be more difficult ;) 
-	static String[] queries = {"artikel", "deutsch"};
+	static String[] queries = {"Uranisotope", "Artikel"};
 	
 	// some variables (will be explained when needed, ignore for now!)
 	static int topK = 10;

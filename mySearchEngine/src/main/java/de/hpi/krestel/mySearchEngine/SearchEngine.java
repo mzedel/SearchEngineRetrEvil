@@ -17,7 +17,7 @@ public abstract class SearchEngine {
 
 		// Directory to store index and result logs 
 		// TODO: change back to "/home/krestel/data/wikipedia-de/"
-		this.directory = "/Users/tim/Documents/Studium/Master/SoSe 2014/Information Retrieval/Aufgaben/wikipedia/" + this.getClass().getSimpleName().toString();
+		this.directory = "/Users/tim/Documents/Studium/Master/SoSe 2014/Information Retrieval/Engine/wikipedia/" + this.getClass().getSimpleName().toString();
 		new File(directory).mkdirs();
 		this.logFile = this.directory +"/" +System.currentTimeMillis() +".log";
 

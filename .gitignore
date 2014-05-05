@@ -16,3 +16,9 @@ hs_err_pid*
 
 # logs from searching
 *.log
+
+# folders from assignments
+*/home/*
+
+# class folders
+*/target/*

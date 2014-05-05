@@ -2,12 +2,19 @@ package de.hpi.krestel.mySearchEngine;
 
 import java.io.EOFException;
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
 import java.io.RandomAccessFile;
+import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
 import java.util.StringTokenizer;
 import java.util.TreeMap;
@@ -19,7 +26,9 @@ import javax.xml.parsers.SAXParserFactory;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.de.GermanAnalyzer;
+import org.apache.lucene.analysis.de.GermanStemFilter;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
+import org.apache.lucene.analysis.util.CharArraySet;
 import org.apache.lucene.util.Version;
 import org.xml.sax.Attributes;
 import org.xml.sax.SAXException;
@@ -84,15 +93,15 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			 * TreeSets, which do not implement the interface List. Iterate
 			 * over the elements via {@link Collection#iterator()}.
 			 */
-			private Map<Long, Collection<Long>> occurrences;
+			private Map<Long, Collection<Integer>> occurrences;
 			
 			/**
 			 * Create a new TermList.
 			 * Initialize the map.
 			 */
 			public TermList() {
-				this.occurrences = new TreeMap<Long, Collection<Long>>();
-			}
+				this.occurrences = new TreeMap<Long, Collection<Integer>>();
+			} 
 			
 			/**
 			 * Create a TermList from parsing a String read from an index file.
@@ -107,7 +116,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				StringTokenizer innerTok;
 				Long docId = null;
 				String positions = null;
-				Long position = null;
+				Integer position = null;
 				boolean isDocId = true;
 				try {
 					while (tok.hasMoreTokens()) {
@@ -119,9 +128,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 							// parse positions
 							innerTok = new StringTokenizer(positions, ",");
 							while (innerTok.hasMoreTokens()) {
-								position = Long.parseLong(innerTok.nextToken());
+								position = Integer.parseInt(innerTok.nextToken());
 								// add occurrence to the list
-								list.addOccurrence(docId, position);
+								list.addOccurrenceFromFile(docId, position);
 							}
 						}
 						isDocId = !isDocId;
@@ -143,18 +152,34 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			 * @param documentId the id of the document
 			 * @param position the position in the document
 			 */
-			public void addOccurrence(Long documentId, Long position) {
+			public void addOccurrence(Long documentId, Integer position) {
 				if (!this.occurrences.containsKey(documentId)) {
 					this.createCollectionForDocument(documentId);
 				}
-				Collection<Long> positions = this.occurrences.get(documentId);
+				Collection<Integer> positions = this.occurrences.get(documentId);
 				/*
 				 * the following test is actually not necessary with TreeSet, 
 				 * but performed anyway as we only use the interface List here
 				 */
 				if (!positions.contains(position)) {
-					positions.add(position);
+					if(positions.size() > 1) {
+						int offset = position - positions.iterator().next();
+						positions.add(offset);
+					} else {
+						positions.add(position);
+					}
 				}
+			}
+			
+			public void addOccurrenceFromFile(Long documentId, Integer position) {
+				if (!this.occurrences.containsKey(documentId)) {
+					this.createCollectionForDocument(documentId);
+				}
+				Collection<Integer> positions = this.occurrences.get(documentId);
+				if(positions.size() > 1) {
+					position = position + positions.iterator().next();
+				}
+				positions.add(position);
 			}
 			
 			/**
@@ -165,7 +190,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			 */
 			private void createCollectionForDocument(Long documentId) {
 				if (!this.occurrences.containsKey(documentId)) {
-					this.occurrences.put(documentId, new TreeSet<Long>());
+					this.occurrences.put(documentId, new TreeSet<Integer>());
 				}
 			}
 			
@@ -181,9 +206,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				result.append("( ");
 				for (Long documentId : this.occurrences.keySet()) {	// uses iterator
 					result.append(documentId + ": [ ");
-					Collection<Long> positions = this.occurrences.get(documentId);
+					Collection<Integer> positions = this.occurrences.get(documentId);
 					if (positions != null) {
-						for (Long position : positions) {	// uses iterator
+						for (int position : positions) {	// uses iterator
 							result.append(position + " ");
 						}
 					}
@@ -206,9 +231,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				
 				for (Long documentId : this.occurrences.keySet()) {	// uses iterator
 					result.append(documentId + ":");
-					Collection<Long> positions = this.occurrences.get(documentId);
+					Collection<Integer> positions = this.occurrences.get(documentId);
 					if (positions != null) {
-						for (Long position : positions) {	// uses iterator
+						for (int position : positions) {	// uses iterator
 							result.append(position + ",");
 						}
 					}
@@ -225,7 +250,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				return result.toString();
 			}
 			
-			public Map<Long, Collection<Long>> getOccurrences() {
+			public Map<Long, Collection<Integer>> getOccurrences() {
 				return this.occurrences;
 			}
 			
@@ -249,7 +274,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 * @param documentId the id of the document
 		 * @param position the position within the document
 		 */
-		public void addTermOccurrence(String term, Long documentId, Long position) {
+		public void addTermOccurrence(String term, Long documentId, Integer position) {
 			if (!this.termLists.containsKey(term)) {
 				this.createListForTerm(term);
 			}
@@ -313,14 +338,99 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	private static class IndexHandler {
 		
 		// name of the file which stores the index
-		private static final String indexFileName = "index.txt";
+		private static final String indexFileName = "index";
 		// name of the file which stores the seeklist
-		private static final String seekListFileName = "seeklist.txt";
+		private static final String seekListFileName = "seeklist";
 		// name of the file which stores the mapping of document ids and titles
-		private static final String titlesFileName = "titles.txt";
+		private static final String titlesFileName = "titles";
+		// extended stopword list 
+		private static final HashSet<String> GERMAN_STOP_WORDS = new HashSet<String>(
+			Arrays.asList(new String[] { "a", "ab", "aber", "ach", "acht", "achte",
+					"achten", "achter", "achtes", "ag", "alle", "allein", "allem", 
+					"allen", "aller", "allerdings", "alles", "allgemeinen", "als", 
+					"also", "am", "an", "and", "andere", "anderen", "andern", "anders", 
+					"au", "auch", "auf", "aus", "ausser", "ausserdem", "b", "bald", 
+					"bei", "beide", "beiden", "beim", "beispiel", "bekannt", "bereits", 
+					"besonders", "besser", "besten", "bin", "bis", "bisher", "bist", 
+					"c", "d", "d.h", "da", "dabei", "dadurch", "dafür", "dagegen", 
+					"daher", "dahin", "dahinter", "damals", "damit", "danach", "daneben", 
+					"dank", "dann", "daran", "darauf", "daraus", "darf", "darfst", "darin", 
+					"darüber", "darum", "darunter", "das", "dasein", "daselbst", "dass", 
+					"dasselbe", "davon", "davor", "dazu", "dazwischen", "dein", "deine", 
+					"deinem", "deiner", "dem", "dementsprechend", "demgegenüber", 
+					"demgemäss", "demselben", "demzufolge", "den", "denen", "denn", 
+					"denselben", "der", "deren", "derjenige", "derjenigen", "dermassen", 
+					"derselbe", "derselben", "des", "deshalb", "desselben", "dessen", 
+					"deswegen", "dich", "die", "diejenige", "diejenigen", "dies", "diese", 
+					"dieselbe", "dieselben", "diesem", "diesen", "dieser", "dieses", "dir", 
+					"doch", "dort", "drei", "drin", "dritte", "dritten", "dritter", "drittes", 
+					"du", "durch", "durchaus", "dürfen", "dürft", "durfte", "durften", 
+					"e", "eben", "ebenso", "ehrlich", "ei", "ei,", "eigen", "eigene", "eigenen", 
+					"eigener", "eigenes", "ein", "einander", "eine", "einem", "einen", "einer", 
+					"eines", "einige", "einigen", "einiger", "einiges", "einmal", "eins", 
+					"elf", "en", "ende", "endlich", "entweder", "er", "Ernst", "erst", 
+					"erste", "ersten", "erster", "erstes", "es", "etwa", "etwas", "euch", 
+					"euer", "euers", "eurem", "f", "früher", "fünf", "fünfte", "fünften", 
+					"fünfter", "fünftes", "für", "g", "gab", "ganz", "ganze", "ganzen", 
+					"ganzer", "ganzes", "gar", "gedurft", "gegen", "gegenüber", "gehabt", 
+					"gehen", "geht", "gekannt", "gekonnt", "gemacht", "gemocht", "gemusst", 
+					"genug", "gerade", "gern", "gesagt", "geschweige", "gewesen", "gewollt", 
+					"geworden", "gibt", "ging", "gleich", "gott", "gross", "grosse", 
+					"grossen", "grosser", "grosses", "gut", "gute", "guter", "gutes", 
+					"h", "habe", "haben", "habt", "hast", "hat", "hatte", "hätte", 
+					"hatten", "hätten", "heisst", "her", "heute", "hier", "hin", "hinter",
+					"hoch", "i", "ich", "ihm", "ihn", "ihnen", "ihr", "ihre", "ihrem", 
+					"ihren", "ihrer", "ihres", "im", "immer", "in", "indem", "infolgedessen", 
+					"ins", "irgend", "ist", "j", "ja", "jahr", "jahre", "jahren", "je", 
+					"jede", "jedem", "jeden", "jeder", "jedermann", "jedermanns", "jedoch", 
+					"jemand", "jemandem", "jemanden", "jene", "jenem", "jenen", "jener", 
+					"jenes", "jetzt", "k", "kam", "kann", "kannst", "kaum", "kein", "keine", 
+					"keinem", "keinen", "keiner", "kleine", "kleinen", "kleiner", "kleines", 
+					"kommen", "kommt", "können", "könnt", "konnte", "könnte", "konnten", 
+					"kurz", "l", "lang", "lange", "leicht", "leide", "lieber", "los", 
+					"m", "machen", "macht", "machte", "mag", "magst", "mahn", "man", 
+					"manche", "manchem", "manchen", "mancher", "manches", "mann", "mehr", 
+					"mein", "meine", "meinem", "meinen", "meiner", "meines", "mensch", 
+					"menschen", "mich", "mir", "mit", "mittel", "mochte", "möchte", 
+					"mochten", "mögen", "möglich", "mögt", "morgen", "muss", "müssen", 
+					"musst", "müsst", "musste", "mussten", "n", "na", "nach", "nachdem", 
+					"nahm", "natürlich", "neben", "nein", "neue", "neuen", "neun", "neunte", 
+					"neunten", "neunter", "neuntes", "nicht", "nichts", "nie", "niemand", 
+					"niemandem", "niemanden", "noch", "nun", "nur", "o", "ob", "oben", "oder", 
+					"of", "offen", "oft", "ohne", "Ordnung", "p", "q", "r", "recht", "rechte", 
+					"rechten", "rechter", "rechtes", "richtig", "rund", "s", "sa", "sache", 
+					"sagt", "sagte", "sah", "satt", "schlecht", "Schluss", "schon", "sechs", 
+					"sechste", "sechsten", "sechster", "sechstes", "sehr", "sei", "seid", 
+					"seien", "sein", "seine", "seinem", "seinen", "seiner", "seines", "seit", 
+					"seitdem", "selbst", "sich", "sie", "sieben", "siebente", "siebenten", 
+					"siebenter", "siebentes", "sind", "so", "solang", "solche", "solchem", 
+					"solchen", "solcher", "solches", "soll", "sollen", "sollte", "sollten", 
+					"sondern", "sonst", "sowie", "später", "statt", "t", "tag", "tage", "tagen", 
+					"tat", "teil", "tel", "the", "to", "tritt", "trotzdem", "tun", "u", 
+					"über", "überhaupt", "übrigens", "uhr", "um", "und", "und?", "uns", 
+					"unser", "unsere", "unserem", "unserer", "unsers", "unter", "v", "vergangenen", 
+					"viel", "viele", "vielem", "vielen", "vielleicht", "vier", "vierte", 
+					"vierten", "vierter", "viertes", "vom", "von", "vor", "w", "wahr?", 
+					"während", "währenddem", "währenddessen", "wann", "war", "wäre", "waren", 
+					"wart", "warum", "was", "wegen", "weil", "weit", "weiter", "weitere", 
+					"weiteren", "weiteres", "welche", "welchem", "welchen", "welcher", 
+					"welches", "wem", "wen", "wenig", "wenige", "weniger", "weniges", 
+					"wenigstens", "wenn", "wer", "werde", "werden", "werdet", "wessen", 
+					"wie", "wieder", "will", "willst", "wir", "wird", "wirklich", "wirst", 
+					"wo", "wohl", "wollen", "wollt", "wollte", "wollten", "worden", "wurde", 
+					"würde", "wurden", "würden", "x", "y", "z", "z.b", "zehn", "zehnte", 
+					"zehnten", "zehnter", "zehntes", "zeit", "zu", "zuerst", "zugleich", 
+					"zum", "zunächst", "zur", "zurück", "zusammen", "zwanzig", "zwar", 
+					"zwei", "zweite", "zweiten", "zweiter", "zweites", "zwischen", "zwölf" }));
+		
+		private static final String[] booleanOperators = new String[] { "and", "or", "but not" };
+		
+		private static final int THRESHOLD = 5000;
 		
 		// directory of files to be read / written
 		private String dir;
+		// simple counter to flush index files to avoid exceedingly high memory consumption
+		private int pageCount = 0;
 		
 		// the analyzer for pre-processing of documents and queries
 		private Analyzer analyzer;
@@ -383,14 +493,11 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			 * As of version 3.1, Snowball stopwords are used per default (can
 			 * be accessed via GermanAnalyzer.getDefaultStopSet());
 			 * 
-			 * TODO: perhaps specify another stop word list; the default list
-			 * seems to include "daß" instead of "dass"
-			 * 
 			 * TODO: there may be a problem with some German characters ('ü' etc.),
 			 * so we might replace these characters (or all UTF-8 characters which
 			 * are not ASCII in general) with some other representation.
 			 */
-			Analyzer analyzer = new GermanAnalyzer(version);
+			Analyzer analyzer = new GermanAnalyzer(version, CharArraySet.copy(version, GERMAN_STOP_WORDS));
 			
 			return analyzer;
 		}
@@ -414,18 +521,19 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			 */
 			TokenStream stream = this.analyzer.tokenStream("fieldName", text);
 			CharTermAttribute termAtt = stream.addAttribute(CharTermAttribute.class);
+			GermanStemFilter stemFilter = new GermanStemFilter(stream);
 			
 			// initiate the list with an initial capacity of 1000
 			List<String> terms = new ArrayList<String>(1000);
 			
 			try {
-				stream.reset();	// necessary for subsequent calls to analyzer.tokenStream
-				while (stream.incrementToken()) {	// proceed to the next term
+				stemFilter.reset();	// necessary for subsequent calls to analyzer.tokenStream
+				while (stemFilter.incrementToken()) {	// proceed to the next term
 					terms.add(termAtt.toString());	// get the term
 				}
-				stream.end();
+				stemFilter.end();
 			} finally {
-				stream.close();
+				stemFilter.close();
 			}
 			
 			return terms;
@@ -449,11 +557,42 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				// add occurrences to index
 				for (int position = 0; position < terms.size(); position++) {
 					String term = terms.get(position);
-					this.index.addTermOccurrence(term, id, (long) position);
+					this.index.addTermOccurrence(term, id, position);
 				}
+				this.pageCount++;
 			} catch (IOException e) {
 				// an IOException was thrown by the Analyzer
 				e.printStackTrace();
+			}
+			
+			if(this.pageCount % THRESHOLD == 0) {
+				int counter = this.pageCount / THRESHOLD;
+				try {
+					File indexFile = this.getErasedFile(this.dir 
+							+ IndexHandler.indexFileName 
+							+ counter 
+							+ ".txt");
+					/* 
+					 * get random access file for index with read / write, attempts 
+					 * to make nonexistent file
+					 */
+					FileOutputStream stream = new FileOutputStream(indexFile);
+					OutputStreamWriter streamWriter = new OutputStreamWriter(stream, "ISO-8859-1");
+					
+					// get map of terms and their occurrence lists
+					Map<String, Index.TermList> termLists = this.index.getTermLists();
+					// write each occurrence list to the file and note the offsets
+					for (String term : termLists.keySet()) {	// uses iterator
+						// write the list using custom toIndexString method of TermList
+						streamWriter.write(termLists.get(term).toIndexString());
+					}
+					// close the index file
+					streamWriter.close();
+					stream.close();
+				} catch(IOException e) {
+					e.printStackTrace();
+				}
+				this.index = new Index();
 			}
 		}
 		
@@ -468,7 +607,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		public void createIndex() {
 			try {
 				// get the index file; if it does already exist, delete it
-				File indexFile = this.getErasedFile(this.dir + IndexHandler.indexFileName);
+				File indexFile = this.getErasedFile(this.dir + IndexHandler.indexFileName + ".txt");
 				/* 
 				 * get random access file for index with read / write, attempts 
 				 * to make nonexistent file
@@ -486,23 +625,37 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				}
 				// close the index file
 				raIndexFile.close();
-				
 				/*
-				 * write the seeklist to a file; it is not necessary to use 
-				 * RandomAccessFile here, but we just use the same pattern
+				 * write the seeklist to a file;
 				 */
-				File seekListFile = this.getErasedFile(this.dir + IndexHandler.seekListFileName);
-				RandomAccessFile raSeekListFile = new RandomAccessFile(seekListFile, "rw");
-				raSeekListFile.writeChars(this.seekListToString());
-				raSeekListFile.close();
+				writeStringifiedToFile(this.seekListToString(), this.dir + IndexHandler.seekListFileName + ".txt");
 				
 				/*
 				 * write the id-title-mapping to a file
 				 */
-				File titlesFile = this.getErasedFile(this.dir + IndexHandler.titlesFileName);
-				RandomAccessFile raTitlesFile = new RandomAccessFile(titlesFile, "rw");
-				raTitlesFile.writeChars(this.titlesToString());
-				raTitlesFile.close();
+				writeStringifiedToFile(this.titlesToString(), this.dir + IndexHandler.titlesFileName + ".txt");
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+
+		/**
+		 * @throws IOException
+		 * @throws FileNotFoundException
+		 * @throws UnsupportedEncodingException
+		 */
+		private void writeStringifiedToFile(String content, String filename) throws IOException,
+				FileNotFoundException, UnsupportedEncodingException {
+			FileOutputStream stream;
+			OutputStreamWriter streamWriter;
+			
+			try {
+				File seekListFile = this.getErasedFile(filename);
+				stream = new FileOutputStream(seekListFile);
+				streamWriter = new OutputStreamWriter(stream, "ISO-8859-1");
+				streamWriter.write(content);
+				streamWriter.close();
+				stream.close();
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
@@ -578,7 +731,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		private void loadIndex() {
 			try {
 				// load the seek list
-				File seekListFile = new File(this.dir + IndexHandler.seekListFileName);
+				File seekListFile = new File(this.dir + IndexHandler.seekListFileName + ".txt");
 				RandomAccessFile raSeekListFile = new RandomAccessFile(seekListFile, "r");
 				
 				StringBuilder builder = new StringBuilder();
@@ -595,7 +748,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				this.parseSeekListFileString(builder.toString());
 				
 				// load the id-titles-mapping
-				File titlesFile = new File(this.dir + IndexHandler.titlesFileName);
+				File titlesFile = new File(this.dir + IndexHandler.titlesFileName + ".txt");
 				RandomAccessFile raTitlesFile = new RandomAccessFile(titlesFile, "rw");
 				
 				builder = new StringBuilder();
@@ -684,15 +837,15 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 * 	<tt>false</tt> otherwise
 		 */
 		public static boolean directoryHasIndexFiles(String dir) {
-			File indexFile = new File(dir + IndexHandler.indexFileName);
+			File indexFile = new File(dir + IndexHandler.indexFileName + ".txt");
 			if (!indexFile.canRead()) {
 				return false;
 			}
-			File seekListFile = new File(dir + IndexHandler.seekListFileName);
+			File seekListFile = new File(dir + IndexHandler.seekListFileName + ".txt");
 			if (!seekListFile.canRead()) {
 				return false;
 			}
-			File titlesFile = new File(dir + IndexHandler.titlesFileName);
+			File titlesFile = new File(dir + IndexHandler.titlesFileName + ".txt");
 			if (!titlesFile.canRead()) {
 				return false;
 			}
@@ -912,7 +1065,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		// get dump file TODO: make that more general
-		String dumpFile = new File(dir).getParent() + "/" + "testDump.xml";
+		String dumpFile = new File(dir).getParent() + "/" + "deWikipediaDump.xml";
 
 		/* 
 		 * create the indexer with the target dir; this instance is only used for
@@ -959,6 +1112,13 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		// week 1: simple keyword search
 		ArrayList<String> titles = new ArrayList<String>();
 		
+		for (String operator : IndexHandler.booleanOperators) {
+			if(query.contains(operator)) return processBooleanQuery(query);
+		}
+		
+		if (query.contains("*")) return processPrefixQuery(query);
+		if (query.contains("'") || query.contains("\"")) return processPhraseQuery(query);
+		
 		try {
 			// preprocess the query
 			List<String> terms = this.indexHandler.processRawText(query);
@@ -985,6 +1145,82 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		return titles;
 	}
 	
+	private ArrayList<String> processPrefixQuery(String query) {
+		String prefix = query.substring(0, query.indexOf("*"));
+		Set<String> results = new TreeSet<String>();
+		for(Entry<String, Long> entry : this.indexHandler.seeklist.entrySet()) {
+			if(entry.getKey().startsWith(prefix))
+				results.add(this.indexHandler.titles.get(entry.getValue()));
+		}
+		return new ArrayList<String>(results);
+	}
+	
+	// overly simplistic boolean query processing assuming the query operator sits between two search terms
+	private ArrayList<String> processBooleanQuery(String query) {
+		query = query.toLowerCase(); // contains is case sensitive
+		String[] terms = query.split(" ");
+		Set<String> results = new TreeSet<String>();
+		if(query.contains(IndexHandler.booleanOperators[0])) { // "AND"
+			int index = Arrays.asList(terms).indexOf(IndexHandler.booleanOperators[0]);
+			String leftProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index - 1)).get(0);
+			String rightProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index + 1)).get(0);
+			
+			Index.TermList leftTermList = this.indexHandler.readListForTerm(leftProcessedTerm);
+			Index.TermList rightTermList = this.indexHandler.readListForTerm(rightProcessedTerm);
+			for(Long document : leftTermList.occurrences.keySet()) {
+				if(rightTermList.occurrences.containsKey(document))
+					results.add(this.indexHandler.titles.get(document));
+			}
+		} else if (query.contains(IndexHandler.booleanOperators[1])) { // "OR"
+			int index = Arrays.asList(terms).indexOf(IndexHandler.booleanOperators[1]);
+			String leftProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index - 1)).get(0);
+			String rightProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index + 1)).get(0);
+			
+			Index.TermList leftTermList = this.indexHandler.readListForTerm(leftProcessedTerm);
+			Index.TermList rightTermList = this.indexHandler.readListForTerm(rightProcessedTerm);
+			leftTermList.occurrences.keySet().addAll(rightTermList.occurrences.keySet());
+			for(Long document : leftTermList.occurrences.keySet()) {
+				results.add(this.indexHandler.titles.get(document));
+			}
+		} else if (query.contains(IndexHandler.booleanOperators[2])) { // "BUT NOT"
+			int index = Arrays.asList(terms).indexOf(IndexHandler.booleanOperators[1]);
+			String leftProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index - 1)).get(0);
+			String rightProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index + 1)).get(0);
+			
+			Index.TermList leftTermList = this.indexHandler.readListForTerm(leftProcessedTerm);
+			Index.TermList rightTermList = this.indexHandler.readListForTerm(rightProcessedTerm);
+			for(Long document : leftTermList.occurrences.keySet()) {
+				if(!rightTermList.occurrences.containsKey(document))
+					results.add(this.indexHandler.titles.get(document));
+			}
+		} else {
+			try {
+				return (ArrayList<String>) this.indexHandler.processRawText(query);
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+		return new ArrayList<String>(results);
+	}
+	
+	private ArrayList<String> processPhraseQuery(String query) {
+		Set<String> results = new TreeSet<String>();
+		int firstIndex = query.indexOf("'") < query.indexOf("\"") ? query.indexOf("'") : query.indexOf("\"");
+		int lastIndex = query.lastIndexOf("'") > query.lastIndexOf("\"") ? query.lastIndexOf("'") : query.lastIndexOf("\"");
+		String content = query.substring(firstIndex, lastIndex);
+		String[] terms = content.split(" ");
+		List<Index.TermList> termLists = new ArrayList<Index.TermList>();
+		for(String term : terms) {
+			termLists.add(this.indexHandler.readListForTerm(term));
+		}
+		for(Index.TermList list : termLists) {
+			for(Entry<Long, Collection<Integer>> occurrence : list.occurrences.entrySet()) {
+//				if(occurrence.)
+			}
+		}
+		return new ArrayList<String>(results);
+	}
+
 	@Override
 	Double computeNdcg(String query, ArrayList<String> ranking, int ndcgAt) {
 		// TODO Auto-generated method stub

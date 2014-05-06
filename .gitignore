@@ -14,5 +14,7 @@ hs_err_pid*
 # Mac OS stuff
 .DS_STORE
 
-# logs from searching
+# local stuff and output
+mySearchEngine/target/
+wikipedia/
 *.log

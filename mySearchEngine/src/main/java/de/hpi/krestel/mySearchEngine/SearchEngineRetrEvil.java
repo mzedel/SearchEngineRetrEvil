@@ -2,12 +2,10 @@ package de.hpi.krestel.mySearchEngine;
 
 import java.io.EOFException;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.RandomAccessFile;
-import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -34,21 +32,35 @@ import org.xml.sax.Attributes;
 import org.xml.sax.SAXException;
 import org.xml.sax.helpers.DefaultHandler;
 
-/* This is your file! implement your search engine here!
- * 
+/*
  * Describe your search engine briefly:
  *  - multi-threaded?
  *  - stemming?
  *  - stopword removal?
  *  - index algorithm?
- *  - etc.  
- * 
- * - Apache Lucene GermanAnalyzer
- *   is used for tokenizing, stemming, stopword removal (uses the default 
- *   Snowball stop word list)
+ *  - etc.
  */
 
 public class SearchEngineRetrEvil extends SearchEngine {
+	
+	/**
+	 * Boolean operator "AND" in upper case
+	 */
+	private static final String AND = "AND";
+	/**
+	 * Boolean operator "OR" in upper case
+	 */
+	private static final String OR = "OR";
+	/**
+	 * Boolean operator "BUT NOT" in upper case
+	 */
+	private static final String BUT_NOT = "BUT NOT";
+	/**
+	 * List of all boolean operators (for convenience)
+	 */
+	private static final String[] BOOLEAN_OPERATORS = new String[] { 
+		AND, OR, BUT_NOT 
+	};
 	
 	/**
 	 * Index handler for queries etc.
@@ -162,7 +174,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				 * but performed anyway as we only use the interface List here
 				 */
 				if (!positions.contains(position)) {
-					if(positions.size() > 1) {
+					if (positions.size() > 1) {
 						int offset = position - positions.iterator().next();
 						positions.add(offset);
 					} else {
@@ -176,7 +188,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					this.createCollectionForDocument(documentId);
 				}
 				Collection<Integer> positions = this.occurrences.get(documentId);
-				if(positions.size() > 1) {
+				if (positions.size() > 1) {
 					position = position + positions.iterator().next();
 				}
 				positions.add(position);
@@ -279,7 +291,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				this.createListForTerm(term);
 			}
 			// delegate the rest to the TermList
-			this.termLists.get(term).addOccurrence(documentId, position);;
+			this.termLists.get(term).addOccurrence(documentId, position);
 		}
 		
 		/**
@@ -424,8 +436,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					"zehnten", "zehnter", "zehntes", "zeit", "zu", "zuerst", "zugleich", 
 					"zum", "zunächst", "zur", "zurück", "zusammen", "zwanzig", "zwar", 
 					"zwei", "zweite", "zweiten", "zweiter", "zweites", "zwischen", "zwölf" }));
-		
-		private static final String[] booleanOperators = new String[] { "and", "or", "but not" };
 		
 		private static final int THRESHOLD = 5000;
 		
@@ -629,8 +639,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				}
 				// close the index file
 				raIndexFile.close();
+				
 				/*
-				 * write the seeklist to a file;
+				 * write the seeklist to a file
 				 */
 				writeStringifiedToFile(this.seekListToString(), this.dir 
 						+ IndexHandler.seekListFileName 
@@ -647,26 +658,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			}
 		}
 
-		/**
-		 * @throws IOException
-		 * @throws FileNotFoundException
-		 * @throws UnsupportedEncodingException
-		 */
-		private void writeStringifiedToFile(String content, String filename) throws IOException,
-				FileNotFoundException, UnsupportedEncodingException {
-			FileOutputStream stream;
-			OutputStreamWriter streamWriter;
-			
-			try {
-				File seekListFile = this.getErasedFile(filename);
-				stream = new FileOutputStream(seekListFile);
-				streamWriter = new OutputStreamWriter(stream, "ISO-8859-1");
-				streamWriter.write(content);
-				streamWriter.close();
-				stream.close();
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
+		private void writeStringifiedToFile(String content, String filename) throws IOException {
+			RandomAccessFile raFile = new RandomAccessFile(filename, "rw");
+			raFile.writeChars(content);
+			raFile.close();
 		}
 		
 		/**
@@ -875,17 +870,23 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 * Use the seek list to read the inverted list of the given term from
 		 * the index file.
 		 * If the term (which should be pre-processed) is not found in the 
-		 * seek list, or if an exception occurs, <tt>null</tt> is returned.
+		 * seek list, or if an exception occurs, an empty list is returned.
+		 * For each call to this method, a new TermList is created, so manipulating
+		 * the returned object will not change any internal state of the Index
+		 * or IndexHandler.
 		 * @param term the term
-		 * @return the read TermList or <tt>null</tt>, if the term is not known
+		 * @return the read TermList
 		 */
 		public Index.TermList readListForTerm(String term) {
+			if (term == null) {
+				throw new IllegalArgumentException("term must not be null!");
+			}
 			if (this.seeklist.containsKey(term)) {
 				// get the offset
 				long offset = this.seeklist.get(term);
 				try {
 					// get the file
-					File seekListFile = new File(this.dir + IndexHandler.indexFileName);
+					File seekListFile = new File(this.dir + IndexHandler.indexFileName + IndexHandler.fileExtension);
 					RandomAccessFile raSeekListFile = new RandomAccessFile(seekListFile, "r");
 					
 					/* 
@@ -913,17 +914,15 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					return list;
 				} catch (IOException e) {
 					e.printStackTrace();
-					return null;
 				}
-			} else {
-				// term not known
-				return null;
 			}
+			// term now known or exception occurred
+			return new Index.TermList();
 		}
 		
 	}
 	
-	/*
+	/**
 	 * The handler for parsing XML data via SAX.
 	 * Extracts id, title and text of every page which is a Wikipedia article
 	 * and not a redirect.
@@ -937,7 +936,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 */
 	private class SAXHandler extends DefaultHandler {
 
-		private IndexHandler indexer;		// builds the index
+		private IndexHandler indexer;	// builds the index
 		
 		private Long id;				// id of current page
 		private StringBuilder title;	// title of current page
@@ -1066,9 +1065,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		
 	}
 	
-	/*
+	/**
 	 * Parse the dump and create the index in the given "dir".
 	 * The dump may be located elsewhere.
+	 * @param dir the path of the directory; an '/' will be appended, if necessary
 	 */
 	@Override
 	void index(String dir) {
@@ -1083,7 +1083,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		// get dump file TODO: make that more general
-		String dumpFile = new File(dir).getParent() + "/" + "deWikipediaDump.xml";
+		String dumpFile = new File(dir).getParent() + "/" + "testDump.xml";
 
 		/* 
 		 * create the indexer with the target dir; this instance is only used for
@@ -1127,42 +1127,48 @@ public class SearchEngineRetrEvil extends SearchEngine {
 
 	@Override
 	ArrayList<String> search(String query, int topK, int prf) {
-		// week 1: simple keyword search
-		ArrayList<String> titles = new ArrayList<String>();
-		
-		for (String operator : IndexHandler.booleanOperators) {
-			if(query.contains(operator)) return processBooleanQuery(query);
+		// if query is null, return an empty result set
+		if (query == null) {
+			return new ArrayList<String>();
 		}
 		
-		if (query.contains("*")) return processPrefixQuery(query);
-		if (query.contains("'") || query.contains("\"")) return processPhraseQuery(query);
-		
-		try {
-			// preprocess the query
-			List<String> terms = this.indexHandler.processRawText(query);
-			System.out.println("# pre-processed term: " + terms.get(0));
-			
-			// find occurrences of the keyword (assume exactly one keyword here)
-			String term = terms.size() > 0 ? terms.get(0) : "trololol";
-			Index.TermList termList = this.indexHandler.readListForTerm(term);
-			System.out.println("# inverted list: " + termList);
-			
-			// get document titles for the document id(s)
-			if (termList != null) {	// is null if the term is not known or an error occurred
-				Set<Long> documentIds = termList.getOccurrences().keySet();
-				for (Long documentId : documentIds) {
-					String title = this.indexHandler.titles.get(documentId);
-					titles.add(title != null ? title : "- title for id " + documentId + " -");
-				}
-			}
-		} catch (IOException e) {
-			e.printStackTrace();
+		// answer query depending on its type
+		if (isBooleanQuery(query)) {
+			return processBooleanQuery(query);	// boolean query
+		} else if (query.contains("*")) {
+			return processPrefixQuery(query);	// prefix query
+		} else if (query.contains("'") || query.contains("\"")) {
+			return processPhraseQuery(query);	// phrase query
+		} else {
+			return processKeywordQuery(query);	// default: keyword query
 		}
-		
-		// return the titles
-		return titles;
 	}
 	
+	/**
+	 * Check if a given query is a boolean query (i.e., contains at least one
+	 * boolean operator).
+	 * @param query the query text
+	 * @return <tt>true</tt> if the query is a boolean query, 
+	 * 		<tt>false</tt> otherwise
+	 */
+	private boolean isBooleanQuery(String query) {
+		query = query.toUpperCase();	// "and" => "AND"
+		
+		for (String operator : SearchEngineRetrEvil.BOOLEAN_OPERATORS) {
+			if (query.contains(operator)) {
+				return true;
+			}
+		}
+		
+		return false;
+	}
+	
+	/**
+	 * Process the query as a prefix query, i.e., find documents containing
+	 * any indexed term which starts with the given prefix.
+	 * @param query the query text
+	 * @return a list of titles of relevant documents
+	 */
 	private ArrayList<String> processPrefixQuery(String query) {
 		String prefix = query.substring(0, query.indexOf("*"));
 		Set<String> results = new TreeSet<String>();
@@ -1173,43 +1179,54 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		return new ArrayList<String>(results);
 	}
 	
-	// overly simplistic boolean query processing assuming the query operator sits between two search terms
+	/**
+	 * Overly simplistic boolean query processing assuming the query operator 
+	 * sits between two search terms.
+	 * TODO: merging keySet()s does not work properly (NullPointerException; not beautiful)
+	 * TODO: merge boolean and phrase query handling (”Art* BUT NOT Artikel”)
+	 * @param query the query text
+	 * @return a list of titles of relevant documents
+	 */
 	private ArrayList<String> processBooleanQuery(String query) {
-		query = query.toLowerCase(); // contains is case sensitive
-		String[] terms = query.split(" ");
 		Set<String> results = new TreeSet<String>();
-		if(query.contains(IndexHandler.booleanOperators[0])) { // "AND"
-			int index = Arrays.asList(terms).indexOf(IndexHandler.booleanOperators[0]);
+		
+		query = query.toUpperCase();	// "and" => "AND"
+		
+		String[] terms = query.split(" ");
+		if (query.contains(SearchEngineRetrEvil.AND)) {
+			int index = Arrays.asList(terms).indexOf(SearchEngineRetrEvil.AND);
 			String leftProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index - 1)).get(0);
 			String rightProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index + 1)).get(0);
 			
 			Index.TermList leftTermList = this.indexHandler.readListForTerm(leftProcessedTerm);
 			Index.TermList rightTermList = this.indexHandler.readListForTerm(rightProcessedTerm);
-			for(Long document : leftTermList.occurrences.keySet()) {
-				if(rightTermList.occurrences.containsKey(document))
+			for (Long document : leftTermList.getOccurrences().keySet()) {
+				if (rightTermList.getOccurrences().containsKey(document)) {
 					results.add(this.indexHandler.titles.get(document));
+				}
 			}
-		} else if (query.contains(IndexHandler.booleanOperators[1])) { // "OR"
-			int index = Arrays.asList(terms).indexOf(IndexHandler.booleanOperators[1]);
+		} else if (query.contains(SearchEngineRetrEvil.OR)) {
+			int index = Arrays.asList(terms).indexOf(SearchEngineRetrEvil.OR);
 			String leftProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index - 1)).get(0);
 			String rightProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index + 1)).get(0);
 			
 			Index.TermList leftTermList = this.indexHandler.readListForTerm(leftProcessedTerm);
 			Index.TermList rightTermList = this.indexHandler.readListForTerm(rightProcessedTerm);
-			leftTermList.occurrences.keySet().addAll(rightTermList.occurrences.keySet());
-			for(Long document : leftTermList.occurrences.keySet()) {
+			leftTermList.getOccurrences().keySet().addAll(rightTermList.getOccurrences().keySet());
+			for (Long document : leftTermList.getOccurrences().keySet()) {
 				results.add(this.indexHandler.titles.get(document));
 			}
-		} else if (query.contains(IndexHandler.booleanOperators[2])) { // "BUT NOT"
-			int index = Arrays.asList(terms).indexOf(IndexHandler.booleanOperators[1]);
+		} else if (query.contains(SearchEngineRetrEvil.BUT_NOT)) {
+			int index = Arrays.asList(terms).indexOf(SearchEngineRetrEvil.BUT_NOT);
 			String leftProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index - 1)).get(0);
 			String rightProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index + 1)).get(0);
 			
 			Index.TermList leftTermList = this.indexHandler.readListForTerm(leftProcessedTerm);
 			Index.TermList rightTermList = this.indexHandler.readListForTerm(rightProcessedTerm);
-			for(Long document : leftTermList.occurrences.keySet()) {
-				if(!rightTermList.occurrences.containsKey(document))
+			for (Long document : leftTermList.getOccurrences().keySet()) {
+				if (!rightTermList.getOccurrences().containsKey(document)) {
 					results.add(this.indexHandler.titles.get(document));
+				}
 			}
 		} else {
 			try {
@@ -1218,25 +1235,64 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				e.printStackTrace();
 			}
 		}
+		
 		return new ArrayList<String>(results);
 	}
 	
+	/**
+	 * TODO: implement
+	 * @param query
+	 * @return
+	 */
 	private ArrayList<String> processPhraseQuery(String query) {
 		Set<String> results = new TreeSet<String>();
-		int firstIndex = query.indexOf("'") < query.indexOf("\"") ? query.indexOf("'") : query.indexOf("\"");
-		int lastIndex = query.lastIndexOf("'") > query.lastIndexOf("\"") ? query.lastIndexOf("'") : query.lastIndexOf("\"");
-		String content = query.substring(firstIndex, lastIndex);
-		String[] terms = content.split(" ");
-		List<Index.TermList> termLists = new ArrayList<Index.TermList>();
-		for(String term : terms) {
-			termLists.add(this.indexHandler.readListForTerm(term));
-		}
-		for(Index.TermList list : termLists) {
-			for(Entry<Long, Collection<Integer>> occurrence : list.occurrences.entrySet()) {
+//		int firstIndex = query.indexOf("'") < query.indexOf("\"") ? query.indexOf("'") : query.indexOf("\"");
+//		int lastIndex = query.lastIndexOf("'") > query.lastIndexOf("\"") ? query.lastIndexOf("'") : query.lastIndexOf("\"");
+//		String content = query.substring(firstIndex, lastIndex);
+//		String[] terms = content.split(" ");
+//		List<Index.TermList> termLists = new ArrayList<Index.TermList>();
+//		for(String term : terms) {
+//			termLists.add(this.indexHandler.readListForTerm(term));
+//		}
+//		for(Index.TermList list : termLists) {
+//			for(Entry<Long, Collection<Integer>> occurrence : list.occurrences.entrySet()) {
 //				if(occurrence.)
-			}
-		}
+//			}
+//		}
 		return new ArrayList<String>(results);
+	}
+	
+	/**
+	 * Process the query as a simple keyword query, i.e., pre-process it and
+	 * treat every term as a search term which must be present.
+	 * @param query the query text
+	 * @return a list of titles of relevant documents
+	 */
+	private ArrayList<String> processKeywordQuery(String query) {
+		// prepare array of titles
+		ArrayList<String> titles = new ArrayList<String>();
+		
+		try {
+			// preprocess the query
+			List<String> terms = this.indexHandler.processRawText(query);
+			
+			// find occurrences of the keyword (if there is any)
+			Index.TermList termList = terms.size() > 0 
+					? this.indexHandler.readListForTerm(terms.get(0)) 
+					: null;
+			
+			// get document titles for the document id(s)
+			Set<Long> documentIds = termList.getOccurrences().keySet();
+			for (Long documentId : documentIds) {
+				String title = this.indexHandler.titles.get(documentId);
+				titles.add(title != null ? title : "- title for id " + documentId + " -");
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		
+		// return the titles
+		return titles;
 	}
 
 	@Override

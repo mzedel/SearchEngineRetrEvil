@@ -343,6 +343,8 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		private static final String seekListFileName = "seeklist";
 		// name of the file which stores the mapping of document ids and titles
 		private static final String titlesFileName = "titles";
+		// file extension
+		private static final String fileExtension = ".txt";
 		// extended stopword list 
 		private static final HashSet<String> GERMAN_STOP_WORDS = new HashSet<String>(
 			Arrays.asList(new String[] { "a", "ab", "aber", "ach", "acht", "achte",
@@ -571,7 +573,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					File indexFile = this.getErasedFile(this.dir 
 							+ IndexHandler.indexFileName 
 							+ counter 
-							+ ".txt");
+							+ IndexHandler.fileExtension);
 					/* 
 					 * get random access file for index with read / write, attempts 
 					 * to make nonexistent file
@@ -607,7 +609,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		public void createIndex() {
 			try {
 				// get the index file; if it does already exist, delete it
-				File indexFile = this.getErasedFile(this.dir + IndexHandler.indexFileName + ".txt");
+				File indexFile = this.getErasedFile(this.dir 
+						+ IndexHandler.indexFileName 
+						+ IndexHandler.fileExtension);
 				/* 
 				 * get random access file for index with read / write, attempts 
 				 * to make nonexistent file
@@ -628,12 +632,16 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				/*
 				 * write the seeklist to a file;
 				 */
-				writeStringifiedToFile(this.seekListToString(), this.dir + IndexHandler.seekListFileName + ".txt");
+				writeStringifiedToFile(this.seekListToString(), this.dir 
+						+ IndexHandler.seekListFileName 
+						+ IndexHandler.fileExtension);
 				
 				/*
 				 * write the id-title-mapping to a file
 				 */
-				writeStringifiedToFile(this.titlesToString(), this.dir + IndexHandler.titlesFileName + ".txt");
+				writeStringifiedToFile(this.titlesToString(), this.dir 
+						+ IndexHandler.titlesFileName 
+						+ IndexHandler.fileExtension);
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
@@ -731,7 +739,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		private void loadIndex() {
 			try {
 				// load the seek list
-				File seekListFile = new File(this.dir + IndexHandler.seekListFileName + ".txt");
+				File seekListFile = new File(this.dir 
+						+ IndexHandler.seekListFileName 
+						+ IndexHandler.fileExtension);
 				RandomAccessFile raSeekListFile = new RandomAccessFile(seekListFile, "r");
 				
 				StringBuilder builder = new StringBuilder();
@@ -748,7 +758,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				this.parseSeekListFileString(builder.toString());
 				
 				// load the id-titles-mapping
-				File titlesFile = new File(this.dir + IndexHandler.titlesFileName + ".txt");
+				File titlesFile = new File(this.dir 
+						+ IndexHandler.titlesFileName 
+						+ IndexHandler.fileExtension);
 				RandomAccessFile raTitlesFile = new RandomAccessFile(titlesFile, "rw");
 				
 				builder = new StringBuilder();
@@ -837,15 +849,21 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 * 	<tt>false</tt> otherwise
 		 */
 		public static boolean directoryHasIndexFiles(String dir) {
-			File indexFile = new File(dir + IndexHandler.indexFileName + ".txt");
+			File indexFile = new File(dir 
+					+ IndexHandler.indexFileName 
+					+ IndexHandler.fileExtension);
 			if (!indexFile.canRead()) {
 				return false;
 			}
-			File seekListFile = new File(dir + IndexHandler.seekListFileName + ".txt");
+			File seekListFile = new File(dir 
+					+ IndexHandler.seekListFileName 
+					+ IndexHandler.fileExtension);
 			if (!seekListFile.canRead()) {
 				return false;
 			}
-			File titlesFile = new File(dir + IndexHandler.titlesFileName + ".txt");
+			File titlesFile = new File(dir 
+					+ IndexHandler.titlesFileName 
+					+ IndexHandler.fileExtension);
 			if (!titlesFile.canRead()) {
 				return false;
 			}

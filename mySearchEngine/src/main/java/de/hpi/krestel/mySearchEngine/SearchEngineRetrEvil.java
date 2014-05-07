@@ -94,8 +94,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 * {@link TreeSet}, whose elements are ordered according to their 
 		 * natural ordering.
 		 * This is a utility class. It does not check for null values.
-		 * 
-		 * TODO: implement delta encoding for document ids and positions
 		 */
 		public static class TermList {
 			
@@ -142,7 +140,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 							while (innerTok.hasMoreTokens()) {
 								position = Integer.parseInt(innerTok.nextToken());
 								// add occurrence to the list
-								list.addOccurrenceFromFile(docId, position);
+								list.addOccurrence(docId, position);
 							}
 						}
 						isDocId = !isDocId;
@@ -170,28 +168,12 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				}
 				Collection<Integer> positions = this.occurrences.get(documentId);
 				/*
-				 * the following test is actually not necessary with TreeSet, 
+				 * the following test is actually not necessary with TreeSet,
 				 * but performed anyway as we only use the interface List here
 				 */
 				if (!positions.contains(position)) {
-					if (positions.size() > 1) {
-						int offset = position - positions.iterator().next();
-						positions.add(offset);
-					} else {
-						positions.add(position);
-					}
+					positions.add(position);
 				}
-			}
-			
-			public void addOccurrenceFromFile(Long documentId, Integer position) {
-				if (!this.occurrences.containsKey(documentId)) {
-					this.createCollectionForDocument(documentId);
-				}
-				Collection<Integer> positions = this.occurrences.get(documentId);
-				if (positions.size() > 1) {
-					position = position + positions.iterator().next();
-				}
-				positions.add(position);
 			}
 			
 			/**

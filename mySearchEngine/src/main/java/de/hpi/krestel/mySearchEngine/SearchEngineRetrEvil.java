@@ -3,9 +3,11 @@ package de.hpi.krestel.mySearchEngine;
 import java.io.EOFException;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.RandomAccessFile;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -13,6 +15,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Scanner;
 import java.util.Set;
 import java.util.StringTokenizer;
 import java.util.TreeMap;
@@ -339,7 +342,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		private static final String titlesFileName = "titles";
 		// file extension
 		private static final String fileExtension = ".txt";
-		// extended stopword list 
+		/** extended stopword list 
+		* based on: http://members.unine.ch/jacques.savoy/clef/
+		* and http://codingwiththomas.blogspot.de/2012/01/german-stop-words.html
+		*/
 		private static final HashSet<String> GERMAN_STOP_WORDS = new HashSet<String>(
 			Arrays.asList(new String[] { "a", "ab", "aber", "ach", "acht", "achte",
 					"achten", "achter", "achtes", "ag", "alle", "allein", "allem", 
@@ -560,29 +566,25 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			}
 			
 			if(this.pageCount % THRESHOLD == 0) {
-				int counter = this.pageCount / THRESHOLD;
 				try {
-					File indexFile = this.getErasedFile(this.dir 
-							+ IndexHandler.indexFileName 
-							+ counter 
+					File indexFile = new File(this.dir
+							+ IndexHandler.indexFileName
 							+ IndexHandler.fileExtension);
-					/* 
-					 * get random access file for index with read / write, attempts 
-					 * to make nonexistent file
-					 */
-					FileOutputStream stream = new FileOutputStream(indexFile);
-					OutputStreamWriter streamWriter = new OutputStreamWriter(stream, "ISO-8859-1");
+
+					RandomAccessFile raIndexFile = new RandomAccessFile(indexFile, "rw");
 					
 					// get map of terms and their occurrence lists
 					Map<String, Index.TermList> termLists = this.index.getTermLists();
 					// write each occurrence list to the file and note the offsets
 					for (String term : termLists.keySet()) {	// uses iterator
+						// note the offset
+						long offset = raIndexFile.getFilePointer();
+						this.seeklist.put(term, offset);
 						// write the list using custom toIndexString method of TermList
-						streamWriter.write(termLists.get(term).toIndexString());
+						raIndexFile.writeChars(termLists.get(term).toIndexString());
 					}
 					// close the index file
-					streamWriter.close();
-					stream.close();
+					raIndexFile.close();
 				} catch(IOException e) {
 					e.printStackTrace();
 				}
@@ -601,26 +603,27 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		public void createIndex() {
 			try {
 				// get the index file; if it does already exist, delete it
-				File indexFile = this.getErasedFile(this.dir 
-						+ IndexHandler.indexFileName 
-						+ IndexHandler.fileExtension);
-				/* 
-				 * get random access file for index with read / write, attempts 
-				 * to make nonexistent file
-				 */
-				RandomAccessFile raIndexFile = new RandomAccessFile(indexFile, "rw");
-				// get map of terms and their occurrence lists
-				Map<String, Index.TermList> termLists = this.index.getTermLists();
-				// write each occurrence list to the file and note the offsets
-				for (String term : termLists.keySet()) {	// uses iterator
-					// note the offset
-					long offset = raIndexFile.getFilePointer();
-					this.seeklist.put(term, offset);
-					// write the list using custom toIndexString method of TermList
-					raIndexFile.writeChars(termLists.get(term).toIndexString());
-				}
-				// close the index file
-				raIndexFile.close();
+//				File indexFile = this.getErasedFile(this.dir 
+//						+ IndexHandler.indexFileName 
+//						+ IndexHandler.fileExtension);
+//				/* 
+//				 * get random access file for index with read / write, attempts 
+//				 * to make nonexistent file
+//				 */
+//				RandomAccessFile raIndexFile = new RandomAccessFile(indexFile, "rw");
+//				
+//				// get map of terms and their occurrence lists
+//				Map<String, Index.TermList> termLists = this.index.getTermLists();
+//				// write each occurrence list to the file and note the offsets
+//				for (String term : termLists.keySet()) {	// uses iterator
+//					// note the offset
+//					long offset = raIndexFile.getFilePointer();
+//					this.seeklist.put(term, offset);
+//					// write the list using custom toIndexString method of TermList
+//					raIndexFile.writeChars(termLists.get(term).toIndexString());
+//				}
+//				// close the index file
+//				raIndexFile.close();
 				
 				/*
 				 * write the seeklist to a file

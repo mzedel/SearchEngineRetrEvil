@@ -2,9 +2,7 @@ package de.hpi.krestel.mySearchEngine;
 
 import java.io.EOFException;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.OutputStreamWriter;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -360,7 +358,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		private static final String titlesFileName = "titles";
 		// file extension
 		private static final String fileExtension = ".txt";
-		// extended stopword list 
+		/** extended stopword list 
+		* based on: http://members.unine.ch/jacques.savoy/clef/
+		* and http://codingwiththomas.blogspot.de/2012/01/german-stop-words.html
+		*/
 		private static final HashSet<String> GERMAN_STOP_WORDS = new HashSet<String>(
 			Arrays.asList(new String[] { "a", "ab", "aber", "ach", "acht", "achte",
 					"achten", "achter", "achtes", "ag", "alle", "allein", "allem", 
@@ -440,12 +441,14 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					"zum", "zunächst", "zur", "zurück", "zusammen", "zwanzig", "zwar", 
 					"zwei", "zweite", "zweiten", "zweiter", "zweites", "zwischen", "zwölf" }));
 		
-		private static final int THRESHOLD = 5000;
+		private static final int THRESHOLD = 4000;
 		
 		// directory of files to be read / written
 		private String dir;
 		// simple counter to flush index files to avoid exceedingly high memory consumption
 		private int pageCount = 0;
+		
+		private long seekPosition = 0;
 		
 		// the analyzer for pre-processing of documents and queries
 		private Analyzer analyzer;
@@ -580,34 +583,40 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			}
 			
 			if(this.pageCount % THRESHOLD == 0) {
-				int counter = this.pageCount / THRESHOLD;
-				try {
-					File indexFile = this.getErasedFile(this.dir 
-							+ IndexHandler.indexFileName 
-							+ counter 
-							+ IndexHandler.fileExtension);
-					/* 
-					 * get random access file for index with read / write, attempts 
-					 * to make nonexistent file
-					 */
-					FileOutputStream stream = new FileOutputStream(indexFile);
-					OutputStreamWriter streamWriter = new OutputStreamWriter(stream, "ISO-8859-1");
-					
-					// get map of terms and their occurrence lists
-					Map<String, Index.TermList> termLists = this.index.getTermLists();
-					// write each occurrence list to the file and note the offsets
-					for (String term : termLists.keySet()) {	// uses iterator
-						// write the list using custom toIndexString method of TermList
-						streamWriter.write(termLists.get(term).toIndexString());
-					}
-					// close the index file
-					streamWriter.close();
-					stream.close();
-				} catch(IOException e) {
-					e.printStackTrace();
-				}
-				this.index = new Index();
+				writeToIndexFile();
 			}
+		}
+
+		private void writeToIndexFile() {
+			try {
+				File indexFile = new File(this.dir
+						+ IndexHandler.indexFileName
+						+ IndexHandler.fileExtension);
+
+				RandomAccessFile raIndexFile = new RandomAccessFile(indexFile, "rw");
+				raIndexFile.seek(this.seekPosition);
+				
+				// get map of terms and their occurrence lists
+				Map<String, Index.TermList> termLists = this.index.getTermLists();
+				// write each occurrence list to the file and note the offsets
+				for (String term : termLists.keySet()) {	// uses iterator
+					// note the offset
+					long offset = raIndexFile.getFilePointer();
+					this.seeklist.put(term, offset);
+					// write the list using custom toIndexString method of TermList
+//						raIndexFile.writeUTF(termLists.get(term).toIndexString());
+					byte[] data = termLists.get(term).toIndexString().getBytes("UTF-8");
+					raIndexFile.writeInt(data.length);
+					raIndexFile.write(data);
+				}
+				this.seekPosition = raIndexFile.getFilePointer();
+				// close the index file
+				raIndexFile.close();
+			} catch(IOException e) {
+				e.printStackTrace();
+			}
+			this.index = new Index();
+			System.out.println(this.pageCount);
 		}
 		
 		/**
@@ -621,26 +630,29 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		public void createIndex() {
 			try {
 				// get the index file; if it does already exist, delete it
-				File indexFile = this.getErasedFile(this.dir 
-						+ IndexHandler.indexFileName 
-						+ IndexHandler.fileExtension);
-				/* 
-				 * get random access file for index with read / write, attempts 
-				 * to make nonexistent file
-				 */
-				RandomAccessFile raIndexFile = new RandomAccessFile(indexFile, "rw");
-				// get map of terms and their occurrence lists
-				Map<String, Index.TermList> termLists = this.index.getTermLists();
-				// write each occurrence list to the file and note the offsets
-				for (String term : termLists.keySet()) {	// uses iterator
-					// note the offset
-					long offset = raIndexFile.getFilePointer();
-					this.seeklist.put(term, offset);
-					// write the list using custom toIndexString method of TermList
-					raIndexFile.writeChars(termLists.get(term).toIndexString());
-				}
-				// close the index file
-				raIndexFile.close();
+//				File indexFile = this.getErasedFile(this.dir 
+//						+ IndexHandler.indexFileName 
+//						+ IndexHandler.fileExtension);
+//				/* 
+//				 * get random access file for index with read / write, attempts 
+//				 * to make nonexistent file
+//				 */
+//				RandomAccessFile raIndexFile = new RandomAccessFile(indexFile, "rw");
+//				
+//				// get map of terms and their occurrence lists
+//				Map<String, Index.TermList> termLists = this.index.getTermLists();
+//				// write each occurrence list to the file and note the offsets
+//				for (String term : termLists.keySet()) {	// uses iterator
+//					// note the offset
+//					long offset = raIndexFile.getFilePointer();
+//					this.seeklist.put(term, offset);
+//					// write the list using custom toIndexString method of TermList
+//					raIndexFile.writeChars(termLists.get(term).toIndexString());
+//				}
+//				// close the index file
+//				raIndexFile.close();
+				// write the remaining entries (pageCount < THRESHOLD) to the IndexFile
+				writeToIndexFile();
 				
 				/*
 				 * write the seeklist to a file
@@ -1091,7 +1103,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		// get dump file TODO: make that more general
-		String dumpFile = new File(dir).getParent() + "/" + "testDump.xml";
+		String dumpFile = new File(dir).getParent() + "/" + "deWikipediaDump.xml";
 
 		/* 
 		 * create the indexer with the target dir; this instance is only used for
@@ -1254,19 +1266,32 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 */
 	private ArrayList<String> processPhraseQuery(String query) {
 		Set<String> results = new TreeSet<String>();
-//		int firstIndex = query.indexOf("'") < query.indexOf("\"") ? query.indexOf("'") : query.indexOf("\"");
-//		int lastIndex = query.lastIndexOf("'") > query.lastIndexOf("\"") ? query.lastIndexOf("'") : query.lastIndexOf("\"");
-//		String content = query.substring(firstIndex, lastIndex);
-//		String[] terms = content.split(" ");
-//		List<Index.TermList> termLists = new ArrayList<Index.TermList>();
-//		for(String term : terms) {
-//			termLists.add(this.indexHandler.readListForTerm(term));
-//		}
-//		for(Index.TermList list : termLists) {
-//			for(Entry<Long, Collection<Integer>> occurrence : list.occurrences.entrySet()) {
-//				if(occurrence.)
-//			}
-//		}
+		int firstIndex = query.indexOf("'") < query.indexOf("\"") ? query.indexOf("'") : query.indexOf("\"");
+		int lastIndex = query.lastIndexOf("'") > query.lastIndexOf("\"") ? query.lastIndexOf("'") : query.lastIndexOf("\"");
+		String content = query.substring(firstIndex, lastIndex);
+		String[] terms = content.split(" ");
+		List<Index.TermList> termLists = new ArrayList<Index.TermList>();
+		for(String term : terms) {
+			termLists.add(this.indexHandler.readListForTerm(term));
+		}
+//		if(!termLists.isEmpty())
+		Index.TermList resultList = new Index.TermList();
+		Index.TermList filterList = termLists.get(0);
+		// this looks really ugly - 	
+		for(Index.TermList list : termLists) {
+			for(Entry<Long, Collection<Integer>> occurrence : list.occurrences.entrySet()) {
+				if(filterList.getOccurrences().containsKey(occurrence.getKey())) {
+					for(int position : filterList.getOccurrences().get(occurrence.getKey())) {
+						if(occurrence.getValue().contains(position + 1))
+							resultList.addOccurrence(occurrence.getKey(), position + 1);
+					}
+				}
+			}
+			filterList = resultList;
+			resultList.getOccurrences().clear();
+		}
+		for(Long documentId : filterList.getOccurrences().keySet())
+			results.add(this.indexHandler.titles.get(documentId));
 		return new ArrayList<String>(results);
 	}
 	

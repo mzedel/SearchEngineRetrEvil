@@ -420,12 +420,14 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					"zum", "zunächst", "zur", "zurück", "zusammen", "zwanzig", "zwar", 
 					"zwei", "zweite", "zweiten", "zweiter", "zweites", "zwischen", "zwölf" }));
 		
-		private static final int THRESHOLD = 5000;
+		private static final int THRESHOLD = 4000;
 		
 		// directory of files to be read / written
 		private String dir;
 		// simple counter to flush index files to avoid exceedingly high memory consumption
 		private int pageCount = 0;
+		
+		private long seekPosition = 0;
 		
 		// the analyzer for pre-processing of documents and queries
 		private Analyzer analyzer;
@@ -572,6 +574,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 						+ IndexHandler.fileExtension);
 
 				RandomAccessFile raIndexFile = new RandomAccessFile(indexFile, "rw");
+				raIndexFile.seek(this.seekPosition);
 				
 				// get map of terms and their occurrence lists
 				Map<String, Index.TermList> termLists = this.index.getTermLists();
@@ -586,6 +589,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					raIndexFile.writeInt(data.length);
 					raIndexFile.write(data);
 				}
+				this.seekPosition = raIndexFile.getFilePointer();
 				// close the index file
 				raIndexFile.close();
 			} catch(IOException e) {

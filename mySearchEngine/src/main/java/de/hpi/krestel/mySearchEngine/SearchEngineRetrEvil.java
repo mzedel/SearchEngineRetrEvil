@@ -9,6 +9,7 @@ import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -61,6 +62,26 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	private static final String[] BOOLEAN_OPERATORS = new String[] { 
 		AND, OR, BUT_NOT 
 	};
+	
+	/**
+	 * BM25 parameter <tt>k1</tt> which regulates the weighting of the term
+	 * frequency in a document (<tt>0</tt>: ignored; <tt>1.2</tt>: usual).
+	 */
+	private static final double BM25_K1 = 1.2;
+	/**
+	 * BM25 parameter <tt>k2</tt> which regulates the weighting of the term
+	 * frequency in the query (<tt>0</tt>: ignored; <tt>0<=k2<=1000</tt>: usual).
+	 */
+	private static final double BM25_K2 = 100.0;
+	/**
+	 * BM25 parameter <tt>b</tt> which regulates the document length normalization
+	 * regarding the weighting of the term frequency in a document (<tt>0</tt>: 
+	 * no normalization; <tt>1</tt>: full normalization).<br>
+	 * If <tt>b</tt> is <tt>0</tt>,
+	 * K can be computed without information about document length and average
+	 * document length.
+	 */
+	private static final double BM25_B = 0.0;
 	
 	/**
 	 * Index handler for queries etc.
@@ -487,7 +508,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			 * As of version 3.1, Snowball stopwords are used per default (can
 			 * be accessed via GermanAnalyzer.getDefaultStopSet());
 			 * 
-			 * TODO: there may be a problem with some German characters ('ü' etc.),
 			 * so we might replace these characters (or all UTF-8 characters which
 			 * are not ASCII in general) with some other representation.
 			 */
@@ -667,7 +687,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		/** 
 		 * Stringifies the seek list for writing it to a file. Uses the pattern:
 		 * 	apfel\t0\tbaum\t1608.	(\t are actual tab characters)
-		 * TODO: make seeklist more space efficient
 		 * @return a string representation of the seek list
 		 */
 		private String seekListToString() {
@@ -689,7 +708,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		/**
 		 * Stringifies the id-title-mapping for writing it to a file. Uses the pattern:
 		 * 	1\tAlan Smithee\t3\tActinium	(\t are actual tab characters)
-		 * TODO: make this more space efficient
 		 * @return a string representation of the id-title-mapping
 		 */
 		private String titlesToString() {
@@ -902,6 +920,14 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			return new Index.TermList();
 		}
 		
+		/**
+		 * Helper function which returns the total number of documents in the corpus.
+		 * @return the total number of documents
+		 */
+		public int totalNumberOfDocuments() {
+			return this.titles.keySet().size();
+		}
+		
 	}
 	
 	/**
@@ -1109,20 +1135,20 @@ public class SearchEngineRetrEvil extends SearchEngine {
 
 	@Override
 	ArrayList<String> search(String query, int topK, int prf) {
-		// if query is null, return an empty result set
-		if (query == null) {
+		// invalid arguments: return an empty result set
+		if (query == null || topK <= 0) {
 			return new ArrayList<String>();
 		}
 		
 		// answer query depending on its type
 		if (isBooleanQuery(query)) {
-			return processBooleanQuery(query);	// boolean query
+			return processBooleanQuery(query);		// boolean query
 		} else if (query.contains("*")) {
-			return processPrefixQuery(query);	// prefix query
+			return processPrefixQuery(query);		// prefix query
 		} else if (query.contains("'") || query.contains("\"")) {
-			return processPhraseQuery(query);	// phrase query
+			return processPhraseQuery(query);		// phrase query
 		} else {
-			return processKeywordQuery(query);	// default: keyword query
+			return processBM25Query(query, topK);	// keyword query
 		}
 	}
 	
@@ -1245,17 +1271,21 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	}
 	
 	/**
+	 * This method is <tt>obsolete</tt>. Use {@link #processBM25Query(String, int)}
+	 * instead.<br>
+	 * 
 	 * Process the query as a simple keyword query, i.e., pre-process it and
 	 * treat every term as a search term which must be present.
 	 * @param query the query text
 	 * @return a list of titles of relevant documents
 	 */
+	@SuppressWarnings("unused")
 	private ArrayList<String> processKeywordQuery(String query) {
 		// prepare array of titles
 		ArrayList<String> titles = new ArrayList<String>();
 		
 		try {
-			// preprocess the query
+			// pre-process the query
 			List<String> terms = this.indexHandler.processRawText(query);
 			
 			// find occurrences of the keyword (if there is any)
@@ -1276,10 +1306,157 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		// return the titles
 		return titles;
 	}
+	
+	/**
+	 * Process the query as a keyword query which is handled using the 
+	 * probabilistic model BM25. Returns a maximum of <tt>topK</tt> titles
+	 * of documents ordered by rank (highest rank first).<br><br>
+	 * 
+	 * There is <b>no</b> relevance information about documents, so the corresponding
+	 * variables <tt>r</tt> and <tt>R</tt> are treated as 0.<br>
+	 * Uses the parameters {@link #BM25_K1}, {@link #BM25_K2}, {@link #BM25_B}
+	 * to regulate the weighting of term frequencies.
+	 * @param query the query text
+	 * @param topK the maximum number of titles to return
+	 * @return a list of titles of ranked documents
+	 */
+	private ArrayList<String> processBM25Query(String query, int topK) {
+		ArrayList<String> titles = new ArrayList<String>();
+		
+		try {
+			// pre-process the query
+			List<String> terms = this.indexHandler.processRawText(query);
+			// if there are no tokens, return an empty result set
+			if (terms.size() == 0) {
+				return titles;
+			}
+			
+			// read index file: get lists of occurrences for all query terms
+			Map<String, Index.TermList> termListMap = new HashMap<String, Index.TermList>();
+			for (String term : terms) {
+				if (termListMap.containsKey(term)) {
+					continue;	// already got the list for this term
+				}
+				// add (term, termList) to the map; termList is never null
+				termListMap.put(term, this.indexHandler.readListForTerm(term));
+			}
+			
+			/*
+			 * Compute variable n (number of documents containing a term) per 
+			 * term by parsing the occurrences. Use this opportunity to compute
+			 * variable qf (frequency of term in the query) per term. Also get the
+			 * set of all documents containing any query term.
+			 */
+			Map<String, Integer> termDocumentCountMap = new HashMap<String, Integer>();
+			Map<String, Integer> termQueryFrequency = new HashMap<String, Integer>();
+			Set<Long> documentIds = new HashSet<Long>();	// HashSet: no repetitions
+			for (String term : terms) {
+				// increment frequency
+				Integer frequency = termQueryFrequency.get(term);	// null if not set yet
+				termQueryFrequency.put(term, frequency != null ? frequency + 1 : 1);
+				
+				/*
+				 * Get ids of documents in which the term occurs as well as the
+				 * number of documents containing the term (once per term)
+				 */
+				if (!termDocumentCountMap.containsKey(term)) {
+					// add the set of document ids
+					documentIds.addAll(termListMap.get(term).getOccurrences().keySet());
+					// put the document ids count
+					Integer documentCount = termListMap.get(term)	// termList is never null, even if the term is unknown
+							.getOccurrences()						// never null either, as initialized at creation
+							.keySet()								// dito
+							.size();								// >= 0
+					termDocumentCountMap.put(term, documentCount);
+				}
+			}
+
+			// get N (the total number of documents)
+			final int N = this.indexHandler.totalNumberOfDocuments();
+			
+			// get the set of query terms (without duplicates)
+			Set<String> uniqueTerms = new HashSet<String>();
+			uniqueTerms.addAll(terms);
+			
+			// Rank each document which contains at least one query term
+			Map<Double, Long> scoreDocumentMap = new TreeMap<Double, Long>();	// ordered by score
+			for (Long documentId : documentIds) {
+				Double score = 0.0;	// score of this document
+				
+				/*
+				 * Compute K (length normalization parameter).
+				 * Note that this would normally be more complicated, including
+				 * the document length and average document length, but as long 
+				 * as BM25_B is set to 0, that does not matter.
+				 */
+				double K = BM25_K1 * (1 - BM25_B);
+				
+				// compute and add the score for each query term
+				for (String term : uniqueTerms) {
+					// R, r = 0
+					// n: number of documents containing the term
+					int n = termDocumentCountMap.get(term);		// must not be null
+					// f: frequency of the term in the document
+					// get the positions of this term for this document
+					Collection<Integer> termDocPositions = termListMap
+							.get(term)							// never null, even if term is not known
+							.getOccurrences()					// never null, at least initialized
+							.get(documentId);					// may be null
+					// if there are positions, get their count
+					int f = termDocPositions != null 
+							? termDocPositions.size() 
+							: 0;
+					// qf: frequency of the term in the query
+					int qf = termQueryFrequency.get(term);  	// must not be null
+					
+					/*
+					 * Compute the score. Note: for very few documents, the first
+					 * factor (log ...) can be 0 (when ... is 1). Here, the natural
+					 * logarithm is used (because Math offers it), but the base
+					 * does not really matter.
+					 */
+					score += (Math.log(1.0 / ((n + 0.5) / ((N - n) + 0.5)))
+							* (((BM25_K1 + 1.0) * f) / (K + f))
+							* (((BM25_K2 + 1.0) * qf) / (BM25_K2 + qf)));
+				}
+				
+				// make sure that the scores are unique to avoid problems with the map
+				while (scoreDocumentMap.containsKey(score)) {
+					score -= 1e-10;	// slightly decrease the score (this is sloppy, but works)
+				}
+				
+				// store the score
+				scoreDocumentMap.put(score, documentId);
+			}
+
+			// get the scores in descending order
+			List<Double> descendingScores = new ArrayList<Double>();
+			for (Double score : scoreDocumentMap.keySet()) {	// uses iterator
+				descendingScores.add(0, score);
+			}
+			
+			// get the titles of the topK best documents
+			for (int i = 0; i < topK; i++) {
+				if (i < descendingScores.size()) {
+					Double score = descendingScores.get(i);
+					Long documentId = scoreDocumentMap.get(score);
+					String title = this.indexHandler.titles.get(documentId);	// must not be null
+					titles.add(title);
+				} else {
+					break;
+				}
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		
+		return titles;
+	}
 
 	@Override
 	Double computeNdcg(String query, ArrayList<String> ranking, int ndcgAt) {
 		// TODO Auto-generated method stub
 		return null;
 	}
+	
 }

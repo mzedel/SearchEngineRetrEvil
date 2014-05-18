@@ -82,6 +82,12 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	private static final double BM25_B = 0.0;
 	
 	/**
+	 * If pseudo relevance feedback is used, this is the maximum number of terms
+	 * that will be used to expand the initial query.
+	 */
+	private static final int PRF_EXPAND = 10;
+	
+	/**
 	 * Index handler for queries etc.
 	 */
 	private IndexHandler indexHandler;
@@ -1148,6 +1154,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				endIndex = lastSpaceIndex;
 			}
 			return text.substring(0, endIndex)	// endIndex cannot be 0 due to a former test of text
+					.replace('\n', ' ')			// remove newlines
 					+ "...";
 		}
 		
@@ -1583,139 +1590,237 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * @return a list of titles of ranked documents
 	 */
 	private ArrayList<String> processBM25Query(String query, int topK, int prf) {
-		ArrayList<String> titles = new ArrayList<String>();
+		ArrayList<String> result = new ArrayList<String>();
 		
 		try {
-			// pre-process the query
+			// pre-process the query to get the query terms
 			List<String> terms = this.indexHandler.processRawText(query);
-			// if there are no tokens, return an empty result set
-			if (terms.size() == 0) {
-				return titles;
-			}
 			
-			// read index file: get lists of occurrences for all query terms
-			Map<String, Index.TermList> termListMap = new HashMap<String, Index.TermList>();
-			for (String term : terms) {
-				if (termListMap.containsKey(term)) {
-					continue;	// already got the list for this term
-				}
-				// add (term, termList) to the map; termList is never null
-				termListMap.put(term, this.indexHandler.readListForTerm(term));
-			}
-			
-			/*
-			 * Compute variable n (number of documents containing a term) per 
-			 * term by parsing the occurrences. Use this opportunity to compute
-			 * variable qf (frequency of term in the query) per term. Also get the
-			 * set of all documents containing any query term.
-			 */
-			Map<String, Integer> termDocumentCountMap = new HashMap<String, Integer>();
-			Map<String, Integer> termQueryFrequency = new HashMap<String, Integer>();
-			Set<Long> documentIds = new HashSet<Long>();	// HashSet: no repetitions
-			for (String term : terms) {
-				// increment frequency
-				Integer frequency = termQueryFrequency.get(term);	// null if not set yet
-				termQueryFrequency.put(term, frequency != null ? frequency + 1 : 1);
+			if (prf == 0) {
+				// no pseudo relevance feedback
 				
-				/*
-				 * Get ids of documents in which the term occurs as well as the
-				 * number of documents containing the term (once per term)
-				 */
-				if (!termDocumentCountMap.containsKey(term)) {
-					// add the set of document ids
-					documentIds.addAll(termListMap.get(term).getOccurrences().keySet());
-					// put the document ids count
-					Integer documentCount = termListMap.get(term)	// termList is never null, even if the term is unknown
-							.getOccurrences()						// never null either, as initialized at creation
-							.keySet()								// dito
-							.size();								// >= 0
-					termDocumentCountMap.put(term, documentCount);
-				}
-			}
-
-			// get N (the total number of documents)
-			final int N = this.indexHandler.totalNumberOfDocuments();
-			
-			// get the set of query terms (without duplicates)
-			Set<String> uniqueTerms = new HashSet<String>();
-			uniqueTerms.addAll(terms);
-			
-			// Rank each document which contains at least one query term
-			Map<Double, Long> scoreDocumentMap = new TreeMap<Double, Long>();	// ordered by score
-			for (Long documentId : documentIds) {
-				Double score = 0.0;	// score of this document
+				// get the IDs of the topK most relevant documents
+				ArrayList<Long> ids = this.processInnerBM25Query(terms, topK);
 				
-				/*
-				 * Compute K (length normalization parameter).
-				 * Note that this would normally be more complicated, including
-				 * the document length and average document length, but as long 
-				 * as BM25_B is set to 0, that does not matter.
-				 */
-				double K = BM25_K1 * (1 - BM25_B);
+				result = this.createQueryAnswerForDocuments(ids, terms);
+			} else {
+				// pseudo relevance feedback
 				
-				// compute and add the score for each query term
-				for (String term : uniqueTerms) {
-					// R, r = 0
-					// n: number of documents containing the term
-					int n = termDocumentCountMap.get(term);		// must not be null
-					// f: frequency of the term in the document
-					// get the positions of this term for this document
-					Collection<Integer> termDocPositions = termListMap
-							.get(term)							// never null, even if term is not known
-							.getOccurrences()					// never null, at least initialized
-							.get(documentId);					// may be null
-					// if there are positions, get their count
-					int f = termDocPositions != null 
-							? termDocPositions.size() 
-							: 0;
-					// qf: frequency of the term in the query
-					int qf = termQueryFrequency.get(term);  	// must not be null
-					
-					/*
-					 * Compute the score. Note: for very few documents, the first
-					 * factor (log ...) can be 0 (when ... is 1). Here, the natural
-					 * logarithm is used (because Math offers it), but the base
-					 * does not really matter.
-					 */
-					score += (Math.log(1.0 / ((n + 0.5) / ((N - n) + 0.5)))
-							* (((BM25_K1 + 1.0) * f) / (K + f))
-							* (((BM25_K2 + 1.0) * qf) / (BM25_K2 + qf)));
-				}
+				// get the IDs of the prf most relevant documents
+				ArrayList<Long> ids = this.processInnerBM25Query(terms, prf);
 				
-				// make sure that the scores are unique to avoid problems with the map
-				while (scoreDocumentMap.containsKey(score)) {
-					score -= 1e-10;	// slightly decrease the score (this is sloppy, but works)
-				}
+				// get the snippets
+				ArrayList<String> snippets = this.createQueryAnswerForDocuments(ids, terms);
 				
-				// store the score
-				scoreDocumentMap.put(score, documentId);
+				// use the snippets to expand the query
+				terms = this.expandQueryTerms(terms, snippets);
+				
+				// reevaluate the expanded query and get the topK most relevant documents
+				ids = this.processInnerBM25Query(terms, topK);
+				
+				result = this.createQueryAnswerForDocuments(ids, terms);
 			}
-
-			// get the scores in descending order
-			List<Double> descendingScores = new ArrayList<Double>();
-			for (Double score : scoreDocumentMap.keySet()) {	// uses iterator
-				descendingScores.add(0, score);
-			}
-			
-			// get the IDs of the topK best documents
-			List<Long> resultIds = new ArrayList<Long>(topK);
-			
-			for (int i = 0; i < topK; i++) {
-				if (i < descendingScores.size()) {
-					Double score = descendingScores.get(i);
-					resultIds.add(scoreDocumentMap.get(score));
-				} else {
-					break;
-				}
-			}
-			
-			// return the String representations of the documents
-			return this.createQueryAnswerForDocuments(resultIds, terms);
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
 		
-		return titles;
+		return result;
+	}
+	
+	/**
+	 * Helper method to expand the given (pre-processed) query terms using the
+	 * snippets of relevant documents as part of the integration of pseudo 
+	 * relevance feedback into the query engine.
+	 * @param terms query terms of the initial query
+	 * @param snippets snippets of documents which were relevant for the initial query
+	 * @return an enhanced list of query terms for the next query
+	 */
+	private ArrayList<String> expandQueryTerms(List<String> terms, List<String> snippets) throws IOException {
+		ArrayList<String> expandedTerms = new ArrayList<String>();
+		
+		// add initial terms
+		expandedTerms.addAll(terms);
+		
+		// pre-process snippets
+		ArrayList<List<String>> processedSnippets = new ArrayList<List<String>>(snippets.size());
+		for (String snippet : snippets) {
+			processedSnippets.add(this.indexHandler.processRawText(snippet));
+		}
+		
+		// count terms in all snippets
+		Map<String, Double> termCountMap = new TreeMap<String, Double>();
+		for (List<String> processedSnippet : processedSnippets) {
+			for (String term : processedSnippet) {
+				if (expandedTerms.contains(term)) {
+					// term is already used
+					continue;
+				}
+				if (termCountMap.containsKey(term)) {
+					// increment count
+					termCountMap.put(term, termCountMap.get(term) + 1.0);
+				} else {
+					// initial count of 1
+					termCountMap.put(term, 1.0);
+				}
+			}
+		}
+		
+		// order by count, slightly change count if necessary to avoid overrides
+		Map<Double, String> sortedTerms = new TreeMap<Double, String>();
+		for (String term : termCountMap.keySet()) {
+			Double count = termCountMap.get(term);
+			while (sortedTerms.containsKey(count)) {
+				count -= 1e-10;
+			}
+			sortedTerms.put(count, term);
+		}
+		
+		// get the reverse order of counts
+		List<Double> reverseCounts = new ArrayList<Double>();
+		for (Double key : sortedTerms.keySet()) {	// keySet of a TreeMap is ordered
+			reverseCounts.add(0, key);
+		}
+		
+		// expand the query terms using a particular maximum of new terms
+		int newTermsCount = 0;
+		for (Double key : reverseCounts) {
+			expandedTerms.add(sortedTerms.get(key));
+			newTermsCount++;
+			if (newTermsCount >= PRF_EXPAND) {
+				break;
+			}
+		}
+
+		return expandedTerms;
+	}
+	
+	/**
+	 * Helper method to perform the actual BM25 query, see 
+	 * {@link #processBM25Query(String, int, int)}.
+	 */
+	private ArrayList<Long> processInnerBM25Query(List<String> terms, int topK) {
+		ArrayList<Long> result = new ArrayList<Long>();
+
+		// if there are no terms, return an empty result set
+		if (terms.size() == 0) {
+			return result;
+		}
+
+		// read index file: get lists of occurrences for all query terms
+		Map<String, Index.TermList> termListMap = new HashMap<String, Index.TermList>();
+		for (String term : terms) {
+			if (termListMap.containsKey(term)) {
+				continue;	// already got the list for this term
+			}
+			// add (term, termList) to the map; termList is never null
+			termListMap.put(term, this.indexHandler.readListForTerm(term));
+		}
+
+		/*
+		 * Compute variable n (number of documents containing a term) per 
+		 * term by parsing the occurrences. Use this opportunity to compute
+		 * variable qf (frequency of term in the query) per term. Also get the
+		 * set of all documents containing any query term.
+		 */
+		Map<String, Integer> termDocumentCountMap = new HashMap<String, Integer>();
+		Map<String, Integer> termQueryFrequency = new HashMap<String, Integer>();
+		Set<Long> documentIds = new HashSet<Long>();	// HashSet: no repetitions
+		for (String term : terms) {
+			// increment frequency
+			Integer frequency = termQueryFrequency.get(term);	// null if not set yet
+			termQueryFrequency.put(term, frequency != null ? frequency + 1 : 1);
+
+			/*
+			 * Get ids of documents in which the term occurs as well as the
+			 * number of documents containing the term (once per term)
+			 */
+			if (!termDocumentCountMap.containsKey(term)) {
+				// add the set of document ids
+				documentIds.addAll(termListMap.get(term).getOccurrences().keySet());
+				// put the document ids count
+				Integer documentCount = termListMap.get(term)	// termList is never null, even if the term is unknown
+						.getOccurrences()						// never null either, as initialized at creation
+						.keySet()								// dito
+						.size();								// >= 0
+				termDocumentCountMap.put(term, documentCount);
+			}
+		}
+
+		// get N (the total number of documents)
+		final int N = this.indexHandler.totalNumberOfDocuments();
+
+		// get the set of query terms (without duplicates)
+		Set<String> uniqueTerms = new HashSet<String>();
+		uniqueTerms.addAll(terms);
+
+		// Rank each document which contains at least one query term
+		Map<Double, Long> scoreDocumentMap = new TreeMap<Double, Long>();	// ordered by score
+		for (Long documentId : documentIds) {
+			Double score = 0.0;	// score of this document
+
+			/*
+			 * Compute K (length normalization parameter).
+			 * Note that this would normally be more complicated, including
+			 * the document length and average document length, but as long 
+			 * as BM25_B is set to 0, that does not matter.
+			 */
+			double K = BM25_K1 * (1 - BM25_B);
+
+			// compute and add the score for each query term
+			for (String term : uniqueTerms) {
+				// R, r = 0
+				// n: number of documents containing the term
+				int n = termDocumentCountMap.get(term);		// must not be null
+				// f: frequency of the term in the document
+				// get the positions of this term for this document
+				Collection<Integer> termDocPositions = termListMap
+						.get(term)							// never null, even if term is not known
+						.getOccurrences()					// never null, at least initialized
+						.get(documentId);					// may be null
+				// if there are positions, get their count
+				int f = termDocPositions != null 
+						? termDocPositions.size() 
+								: 0;
+						// qf: frequency of the term in the query
+						int qf = termQueryFrequency.get(term);  	// must not be null
+
+						/*
+						 * Compute the score. Note: for very few documents, the first
+						 * factor (log ...) can be 0 (when ... is 1). Here, the natural
+						 * logarithm is used (because Math offers it), but the base
+						 * does not really matter.
+						 */
+						score += (Math.log(1.0 / ((n + 0.5) / ((N - n) + 0.5)))
+								* (((BM25_K1 + 1.0) * f) / (K + f))
+								* (((BM25_K2 + 1.0) * qf) / (BM25_K2 + qf)));
+			}
+
+			// make sure that the scores are unique to avoid problems with the map
+			while (scoreDocumentMap.containsKey(score)) {
+				score -= 1e-10;	// slightly decrease the score (this is sloppy, but works)
+			}
+
+			// store the score
+			scoreDocumentMap.put(score, documentId);
+		}
+
+		// get the scores in descending order
+		List<Double> descendingScores = new ArrayList<Double>();
+		for (Double score : scoreDocumentMap.keySet()) {	// uses iterator
+			descendingScores.add(0, score);
+		}
+
+		// get the IDs of the topK best documents
+		for (int i = 0; i < topK; i++) {
+			if (i < descendingScores.size()) {
+				Double score = descendingScores.get(i);
+				result.add(scoreDocumentMap.get(score));
+			} else {
+				break;
+			}
+		}
+
+		return result;
 	}
 
 	@Override

@@ -2,9 +2,7 @@ package de.hpi.krestel.mySearchEngine;
 
 import java.io.EOFException;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.OutputStreamWriter;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -355,7 +353,11 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		// name of the file which stores the index
 		private static final String indexFileName = "index";
 		// name of the file which stores the seeklist
-		private static final String seekListFileName = "seeklist";
+		private static final String seekListFileName = "index_seeklist";
+		// name of the file which stores the texts (for snippets)
+		private static final String textsFileName = "texts";
+		// name of the file which stores the seeklist for the texts
+		private static final String textsSeekListFileName = "texts_seeklist";
 		// name of the file which stores the mapping of document ids and titles
 		private static final String titlesFileName = "titles";
 		// file extension
@@ -440,12 +442,12 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					"zum", "zunächst", "zur", "zurück", "zusammen", "zwanzig", "zwar", 
 					"zwei", "zweite", "zweiten", "zweiter", "zweites", "zwischen", "zwölf" }));
 		
-		private static final int THRESHOLD = 5000;
+//		private static final int THRESHOLD = 5000;
 		
 		// directory of files to be read / written
 		private String dir;
 		// simple counter to flush index files to avoid exceedingly high memory consumption
-		private int pageCount = 0;
+//		private int pageCount = 0;
 		
 		// the analyzer for pre-processing of documents and queries
 		private Analyzer analyzer;
@@ -454,6 +456,8 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		private Index index;
 		// the seeklist (term - offset)
 		private Map<String, Long> seeklist;
+		// the seeklist for the texts (document id - offset)
+		private Map<Long, Long> textsSeeklist;
 		// the mapping from document ids to titles
 		private Map<Long, String> titles;
 		
@@ -482,9 +486,13 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			this.analyzer = this.createAnalyzer();
 			this.index = new Index();
 			this.seeklist = new TreeMap<String, Long>();
+			this.textsSeeklist = new TreeMap<Long, Long>();
 			this.titles = new TreeMap<Long, String>();
-			// load seeklist and mapping of titles, if so desired
-			if (load) {
+			// if a new index is to be created, delete old files (if necessary)
+			if (!load) {
+				this.deleteOldFiles();
+			} else {
+				// load seeklist and mapping of titles
 				this.loadIndex();
 			}
 		}
@@ -556,6 +564,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		/**
 		 * Add the id-title-mapping to the respective map.
 		 * Add the occurrences of all terms in the given text to the index.
+		 * Add the text to the texts file and store the offset.
 		 * If an IOException occurs, print it, but proceed.
 		 * @param id the id of the document
 		 * @param title the title of the document
@@ -573,40 +582,66 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					String term = terms.get(position);
 					this.index.addTermOccurrence(term, id, position);
 				}
-				this.pageCount++;
+//				this.pageCount++;
 			} catch (IOException e) {
 				// an IOException was thrown by the Analyzer
 				e.printStackTrace();
 			}
 			
-			if(this.pageCount % THRESHOLD == 0) {
-				int counter = this.pageCount / THRESHOLD;
-				try {
-					File indexFile = this.getErasedFile(this.dir 
-							+ IndexHandler.indexFileName 
-							+ counter 
-							+ IndexHandler.fileExtension);
-					/* 
-					 * get random access file for index with read / write, attempts 
-					 * to make nonexistent file
-					 */
-					FileOutputStream stream = new FileOutputStream(indexFile);
-					OutputStreamWriter streamWriter = new OutputStreamWriter(stream, "ISO-8859-1");
-					
-					// get map of terms and their occurrence lists
-					Map<String, Index.TermList> termLists = this.index.getTermLists();
-					// write each occurrence list to the file and note the offsets
-					for (String term : termLists.keySet()) {	// uses iterator
-						// write the list using custom toIndexString method of TermList
-						streamWriter.write(termLists.get(term).toIndexString());
-					}
-					// close the index file
-					streamWriter.close();
-					stream.close();
-				} catch(IOException e) {
-					e.printStackTrace();
-				}
-				this.index = new Index();
+//			if (this.pageCount % THRESHOLD == 0) {
+//				int counter = this.pageCount / THRESHOLD;
+//				try {
+//					File indexFile = this.getErasedFile(this.dir 
+//							+ IndexHandler.indexFileName 
+//							+ counter 
+//							+ IndexHandler.fileExtension);
+//					/* 
+//					 * get random access file for index with read / write, attempts 
+//					 * to make nonexistent file
+//					 */
+//					FileOutputStream stream = new FileOutputStream(indexFile);
+//					OutputStreamWriter streamWriter = new OutputStreamWriter(stream, "ISO-8859-1");
+//					
+//					// get map of terms and their occurrence lists
+//					Map<String, Index.TermList> termLists = this.index.getTermLists();
+//					// write each occurrence list to the file and note the offsets
+//					for (String term : termLists.keySet()) {	// uses iterator
+//						// write the list using custom toIndexString method of TermList
+//						streamWriter.write(termLists.get(term).toIndexString());
+//					}
+//					// close the index file
+//					streamWriter.close();
+//					stream.close();
+//				} catch(IOException e) {
+//					e.printStackTrace();
+//				}
+//				this.index = new Index();
+//			}
+			
+			// handle texts file and seeklist
+			try {
+				RandomAccessFile raTextsFile = new RandomAccessFile(new File(this.dir 
+						+ IndexHandler.textsFileName 
+						+ IndexHandler.fileExtension), "rw");
+				
+				// set pointer to end of file (position of first new byte to be written)
+				raTextsFile.seek(raTextsFile.length());
+				
+				// store offset (before the text) in the seeklist of the texts file
+				this.textsSeeklist.put(id, raTextsFile.getFilePointer());
+				
+				// remove tabs from the text and add one as separator
+				String processedText = (text != null ? text : "")
+						.replace('\t', ' ')
+						.concat("\t");
+				
+				// write text of the document to the file
+				raTextsFile.writeChars(processedText);
+				
+				// close the file
+				raTextsFile.close();
+			} catch (IOException e) {
+				e.printStackTrace();
 			}
 		}
 		
@@ -650,6 +685,13 @@ public class SearchEngineRetrEvil extends SearchEngine {
 						+ IndexHandler.fileExtension);
 				
 				/*
+				 * write the seeklist of the texts file to a file
+				 */
+				writeStringifiedToFile(this.textsSeekListToString(), this.dir
+						+ IndexHandler.textsSeekListFileName
+						+ IndexHandler.fileExtension);
+				
+				/*
 				 * write the id-title-mapping to a file
 				 */
 				writeStringifiedToFile(this.titlesToString(), this.dir 
@@ -685,8 +727,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		/** 
-		 * Stringifies the seek list for writing it to a file. Uses the pattern:
-		 * 	apfel\t0\tbaum\t1608.	(\t are actual tab characters)
+		 * Stringifies the seek list for writing it to a file. Uses the pattern:<br>
+		 * <i>apfel\t0\tbaum\t1608.</i><br>
+		 * (\t are actual tab characters)
 		 * @return a string representation of the seek list
 		 */
 		private String seekListToString() {
@@ -697,6 +740,27 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					.append(term)
 					.append('\t')
 					.append(this.seeklist.get(term))
+					.append('\t');
+			}
+			// remove the last '\t'
+			result.deleteCharAt(result.lastIndexOf("\t"));
+			
+			return result.toString();
+		}
+		
+		/**
+		 * Stringifies the seek list of the texts file for writing it to a file.
+		 * Use the pattern like in {@link #seekListToString()}.
+		 * @return a string representation of the seek list of the texts file
+		 */
+		private String textsSeekListToString() {
+			StringBuilder result = new StringBuilder();
+			
+			for (Long id : this.textsSeeklist.keySet()) {	// uses iterator
+				result
+					.append(id)
+					.append('\t')
+					.append(this.textsSeeklist.get(id))
 					.append('\t');
 			}
 			// remove the last '\t'
@@ -752,6 +816,25 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				
 				this.parseSeekListFileString(builder.toString());
 				
+				// load the seek list of the texts file
+				File textsSeekListFile = new File(this.dir 
+						+ IndexHandler.textsSeekListFileName 
+						+ IndexHandler.fileExtension);
+				RandomAccessFile raTextsSeekListFile = new RandomAccessFile(textsSeekListFile, "r");
+				
+				builder = new StringBuilder();
+				try {
+					while (true) {
+						builder.append(raTextsSeekListFile.readChar());
+					}
+				} catch (EOFException e) {
+					// end of file: proceed
+				} finally {
+					raTextsSeekListFile.close();
+				}
+				
+				this.parseTextsSeekListFileString(builder.toString());
+				
 				// load the id-titles-mapping
 				File titlesFile = new File(this.dir 
 						+ IndexHandler.titlesFileName 
@@ -806,6 +889,36 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		/**
+		 * Construct a seek list of the texts file from the read string. 
+		 * If an exception occurs, print it, but proceed.
+		 * @param string seek list file string
+		 */
+		private void parseTextsSeekListFileString(String string) {
+			StringTokenizer tok = new StringTokenizer(string, "\t");
+			
+			boolean isId = true;	// whether the current token is the id
+			Long id = null;
+			Long offset = null;
+			
+			while (tok.hasMoreTokens()) {
+				String token = tok.nextToken();
+				try {
+					if (isId) {
+						// parse the term
+						id = Long.parseLong(token);
+					} else {
+						// parse the term's offset and add it to the map
+						offset = Long.parseLong(token);
+						this.textsSeeklist.put(id, offset);
+					}
+					isId = !isId;
+				} catch (NumberFormatException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+		
+		/**
 		 * Construct an id-titles-mapping from the read string. If an exception occurs,
 		 * print it, but proceed.
 		 * @param string seek list file string
@@ -836,6 +949,33 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		/**
+		 * Delete all index files which exist (as preparation for the creation
+		 * of new index files).
+		 */
+		private void deleteOldFiles() {
+			// use getErasedFile to erase the files, if they exist
+			try {
+				this.getErasedFile(dir 
+						+ IndexHandler.indexFileName 
+						+ IndexHandler.fileExtension);
+				this.getErasedFile(dir 
+					+ IndexHandler.seekListFileName 
+					+ IndexHandler.fileExtension);
+				this.getErasedFile(dir 
+					+ IndexHandler.textsFileName 
+					+ IndexHandler.fileExtension);
+				this.getErasedFile(dir 
+					+ IndexHandler.textsSeekListFileName 
+					+ IndexHandler.fileExtension);
+				this.getErasedFile(dir 
+					+ IndexHandler.titlesFileName 
+					+ IndexHandler.fileExtension);
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+		
+		/**
 		 * Tests whether the given directory has all necessary index files
 		 * (index file, seek list, id-title-mapping). If an IOException occurs,
 		 * return <tt>false</tt>.
@@ -854,6 +994,18 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					+ IndexHandler.seekListFileName 
 					+ IndexHandler.fileExtension);
 			if (!seekListFile.canRead()) {
+				return false;
+			}
+			File textsFile = new File(dir 
+					+ IndexHandler.textsFileName 
+					+ IndexHandler.fileExtension);
+			if (!textsFile.canRead()) {
+				return false;
+			}
+			File textsSeekListFile = new File(dir 
+					+ IndexHandler.textsSeekListFileName 
+					+ IndexHandler.fileExtension);
+			if (!textsSeekListFile.canRead()) {
 				return false;
 			}
 			File titlesFile = new File(dir 
@@ -926,6 +1078,77 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 */
 		public int totalNumberOfDocuments() {
 			return this.titles.keySet().size();
+		}
+		
+		/**
+		 * Create a snippet of the document. Look for any occurrence of a search
+		 * term and retrieve the text around that occurrence.
+		 * @param documentId the ID of the document
+		 * @param queryTerms the terms searched for
+		 * @return the snippet or <tt>null</tt> if the given id is <tt>null</tt>,
+		 *   the document is not known or an error occurs
+		 */
+		public String getSnippetForDocumentId(Long documentId, List<String> queryTerms) {
+			// catch unsuited arguments
+			if (documentId == null) {
+				return null;
+			}
+			
+			// get the file offset of the texts file
+			Long offset = this.textsSeeklist.get(documentId);
+			if (offset == null) {
+				// document is not known
+				return null;
+			}
+			
+			// read the original text of the document from the texts file
+			StringBuilder builder = new StringBuilder();
+			try {
+				// get the file
+				File textsFile = new File(this.dir + IndexHandler.textsFileName + IndexHandler.fileExtension);
+				RandomAccessFile raTextsFile = new RandomAccessFile(textsFile, "r");
+				
+				/* 
+				 * read the file until the text is finished (i.e., until the 
+				 * first '\t' or end of file
+				 */
+				raTextsFile.seek(offset);
+				try {
+					while (true) {
+						String character = String.valueOf(raTextsFile.readChar());
+						if (character.equals("\t")) {
+							break;
+						} else {
+							builder.append(character);
+						}
+					}
+				} catch (EOFException e) {
+					// continue
+				}
+				raTextsFile.close();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+			String text = builder.toString();
+			if (text == null || text.equals("")) {
+				// no text
+				return null;
+			}
+			
+			/*
+			 * Create a snippet from the text.
+			 * TODO: consider query terms; this is difficult because they are
+			 * pre-processed (which means that the text would have to be pre-
+			 * processed as well, which makes creating the snippet difficult)
+			 */
+			// simple algorithm: just use the beginning
+			int endIndex = Math.min(240, text.length());				// exclusive end index
+			int lastSpaceIndex = text.lastIndexOf(" ", (endIndex - 1));	// searching backwards
+			if (lastSpaceIndex > 180) {
+				endIndex = lastSpaceIndex;
+			}
+			return text.substring(0, endIndex)	// endIndex cannot be 0 due to a former test of text
+					+ "...";
 		}
 		
 	}
@@ -1140,16 +1363,50 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			return new ArrayList<String>();
 		}
 		
-		// answer query depending on its type
+		// answer query depending on its type TODO: make sure that topK and prf are used if necessary
 		if (isBooleanQuery(query)) {
-			return processBooleanQuery(query);		// boolean query
+			return processBooleanQuery(query);			// boolean query
 		} else if (query.contains("*")) {
-			return processPrefixQuery(query);		// prefix query
+			return processPrefixQuery(query);			// prefix query
 		} else if (query.contains("'") || query.contains("\"")) {
-			return processPhraseQuery(query);		// phrase query
+			return processPhraseQuery(query);			// phrase query
 		} else {
-			return processBM25Query(query, topK);	// keyword query
+			return processBM25Query(query, topK, prf);	// keyword query
 		}
+	}
+	
+	/**
+	 * Creates a list of String representations for the documents denoted by the
+	 * given IDs.<br>
+	 * For each document, the title followed by a snippet is returned.<br>
+	 * If the given list is <tt>null</tt> or empty, an empty list is returned.
+	 * @param documentIds the IDs of the relevant documents
+	 * @param queryTerms the list of terms used in the query, used for snippet
+	 *   creation
+	 * @return a list of String representations of the relevant documents which
+	 * 	is never <tt>null</tt>
+	 */
+	private ArrayList<String> createQueryAnswerForDocuments(
+			List<Long> documentIds, List<String> queryTerms) {
+		// catch unsuited arguments
+		if (documentIds == null || documentIds.size() <= 0) {
+			return new ArrayList<String>();
+		}
+		
+		ArrayList<String> result = new ArrayList<String>(documentIds.size());
+		
+		for (Long documentId : documentIds) {
+			// get the title of the document
+			String title = this.indexHandler.titles.get(documentId);
+			// get a snippet of the document
+			String snippet = this.indexHandler.getSnippetForDocumentId(documentId, queryTerms);
+			
+			// store: title + newline (unless snippet is null) + snippet
+			result.add((title != null ? title : "") 
+					+ (snippet != null ? ("\n" + snippet) : ""));
+		}
+		
+		return result;
 	}
 	
 	/**
@@ -1315,12 +1572,17 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * There is <b>no</b> relevance information about documents, so the corresponding
 	 * variables <tt>r</tt> and <tt>R</tt> are treated as 0.<br>
 	 * Uses the parameters {@link #BM25_K1}, {@link #BM25_K2}, {@link #BM25_B}
-	 * to regulate the weighting of term frequencies.
+	 * to regulate the weighting of term frequencies.<br><br>
+	 * 
+	 * If <tt>prf</tt> is greater than <tt>0</tt>, pseudo relevance feedback is
+	 * used.
 	 * @param query the query text
 	 * @param topK the maximum number of titles to return
+	 * @param prf use pseudo relevance feedback using the top <tt>prf</tt> documents
+	 *   (if it is <tt>0</tt>, no pseudo relevance feedback is used)
 	 * @return a list of titles of ranked documents
 	 */
-	private ArrayList<String> processBM25Query(String query, int topK) {
+	private ArrayList<String> processBM25Query(String query, int topK, int prf) {
 		ArrayList<String> titles = new ArrayList<String>();
 		
 		try {
@@ -1435,17 +1697,20 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				descendingScores.add(0, score);
 			}
 			
-			// get the titles of the topK best documents
+			// get the IDs of the topK best documents
+			List<Long> resultIds = new ArrayList<Long>(topK);
+			
 			for (int i = 0; i < topK; i++) {
 				if (i < descendingScores.size()) {
 					Double score = descendingScores.get(i);
-					Long documentId = scoreDocumentMap.get(score);
-					String title = this.indexHandler.titles.get(documentId);	// must not be null
-					titles.add(title);
+					resultIds.add(scoreDocumentMap.get(score));
 				} else {
 					break;
 				}
 			}
+			
+			// return the String representations of the documents
+			return this.createQueryAnswerForDocuments(resultIds, terms);
 		} catch (IOException e) {
 			e.printStackTrace();
 		}

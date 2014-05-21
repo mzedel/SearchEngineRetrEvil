@@ -88,6 +88,14 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	private static final int PRF_EXPAND = 10;
 	
 	/**
+	 * Whether snippets shall be included in the result set.
+	 * If set to <tt>true</tt>, only titles will be returned.
+	 * If set to <tt>false</tt>, for each document, the title followed by the
+	 * snippet will be returned.
+	 */
+	private static final boolean PRINT_SNIPPETS = false;
+	
+	/**
 	 * Index handler for queries etc.
 	 */
 	private IndexHandler indexHandler;
@@ -1405,12 +1413,18 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		for (Long documentId : documentIds) {
 			// get the title of the document
 			String title = this.indexHandler.titles.get(documentId);
-			// get a snippet of the document
-			String snippet = this.indexHandler.getSnippetForDocumentId(documentId, queryTerms);
 			
-			// store: title + newline (unless snippet is null) + snippet
-			result.add((title != null ? title : "") 
-					+ (snippet != null ? ("\n" + snippet) : ""));
+			if (PRINT_SNIPPETS) {
+				// get a snippet of the document
+				String snippet = this.indexHandler.getSnippetForDocumentId(documentId, queryTerms);
+				
+				// store: title + newline (unless snippet is null) + snippet
+				result.add((title != null ? title : "") 
+						+ (snippet != null ? ("\n" + snippet) : ""));
+			} else {
+				// store the title only
+				result.add(title != null ? title : "");
+			}
 		}
 		
 		return result;

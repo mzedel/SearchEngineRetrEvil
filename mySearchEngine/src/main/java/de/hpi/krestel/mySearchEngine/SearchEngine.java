@@ -51,8 +51,8 @@ public abstract class SearchEngine {
 		long time = System.currentTimeMillis() - start;
 		ArrayList<String> goldRanking = getGoldRanking(query);
 		Double ndcg = computeNdcg(goldRanking, ranking, topK);
-		String output = "\nQuery: " +query +"\t Query Time: " +time +"ms\nRanking: ";
-		System.out.println("query: " +query);
+		String output = "\nQuery: " + query +"\t Query Time: " + time +"ms\nRanking: ";
+		System.out.println("query: " + query);
 		if (ranking!=null) {
 			Iterator<String> iter = ranking.iterator();
 			while(iter.hasNext()){
@@ -91,7 +91,18 @@ public abstract class SearchEngine {
 		String[] lines = wikipage.split("\n");
 		for (int i=0;i<lines.length;i++) {
 			if (lines[i].startsWith("<li>")) {
-				Pattern p = Pattern.compile("title=\"(.*)\"");
+				/*
+				 * The original pattern 
+				 * 		title=\"(.*)\"
+				 * broke for redirections (which included two occurrences of 
+				 * 		title="..."
+				 * so that the match included everything between the first '"' of
+				 * the first occurrence and the second '"' of the second occurrence.
+				 * Therefore, the pattern
+				 * 		title=\"([^\"]*)\"
+				 * is used to exclude '"'.
+				 */
+				Pattern p = Pattern.compile("title=\"([^\"]*)\"");
 				Matcher m = p.matcher(lines[i]);
 				m.find();
 				gold.add(m.group(1));

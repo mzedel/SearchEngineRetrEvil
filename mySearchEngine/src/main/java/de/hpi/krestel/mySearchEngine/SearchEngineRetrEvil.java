@@ -1824,7 +1824,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	}
 
 	@Override
-	Double computeNdcg(String query, ArrayList<String> ranking, int ndcgAt) {
+	Double computeNdcg(ArrayList<String> goldRanking, ArrayList<String> myRanking, int at) {
 		// TODO Auto-generated method stub
 		return null;
 	}

@@ -1837,10 +1837,83 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		return result;
 	}
 
+	/**
+	 * Compute the Normalized Discounted Cumulative Gain for the given ranking
+	 * and ideal ranking at the given position.<br>
+	 * 
+	 * Relevance: assume binary relevance, i.e., all documents in the goldRanking
+	 * are relevant and documents in the actual ranking are relevant if and only
+	 * if they are also listed in the goldRanking.
+	 * @param goldRanking the ideal ranking of document titles
+	 * @param myRanking the actual ranking of document titles
+	 * @param at the rank for which the value is to be computed, counting
+	 *   from 1 (highest ranking document), or <tt>null</tt> if an argument is
+	 *   invalid (i.e., at < 1 or goldRanking or myRanking are <tt>null</tt> or 
+	 *   empty); the actual rank which is used is min{at, goldRanking.size, myRanking.size}
+	 */
 	@Override
 	Double computeNdcg(ArrayList<String> goldRanking, ArrayList<String> myRanking, int at) {
-		// TODO Auto-generated method stub
-		return null;
+		// catch invalid arguments
+		if (goldRanking == null || goldRanking.size() == 0 
+				|| myRanking == null || myRanking.size() == 0
+				|| at < 1) {
+			return null;
+		}
+		at = Math.min(Math.min(goldRanking.size(), myRanking.size()), at);
+		
+		// create list of relevance values for the actual ranking
+		double[] actualRelevance = new double[at];	// up to the desired rank
+		for (int i = 0; i < at; i++) {
+			/* 
+			 * assume binary relevance where a document is relevant if and only
+			 * if it is in the ideal ranking, regardless of position
+			 */
+			actualRelevance[i] = goldRanking.contains(myRanking.get(i)) ? 1.0 : 0.0;
+		}
+		
+		// create list of relevance values for the ideal ranking
+		double[] idealRelevance = new double[at];	// up to the desired rank
+		for (int i = 0; i < at; i++) {
+			/*
+			 * assume binary relevance where every document within the ideal
+			 * ranking is relevant
+			 */
+			idealRelevance[i] = 1;
+		}
+		return ndcg(actualRelevance, idealRelevance);
+	}
+	
+	/**
+	 * Helper method which computes the Normalized Discounted Cumulative Gain
+	 * for arrays of relevance values from the actual and an ideal ranking at
+	 * the last position.
+	 * @param actualRelevance relevance values for the actual ranking
+	 * @param idealRelevance relevance values for the ideal ranking
+	 * @return the NDCG at the last position
+	 */
+	private static double ndcg(double[] actualRelevance, double[] idealRelevance) {
+		// initialize DCGs
+		double actualDcg = 0.0;
+		double idealDcg = 0.0;
+		
+		// compute the DCGs
+		for (int i = 0; i < actualRelevance.length; i++) {
+			actualDcg += (actualRelevance[i] * gain(i + 1));
+			idealDcg += (idealRelevance[i] * gain(i + 1));
+		}
+		
+		// return the NDCG
+		return actualDcg / idealDcg;
+	}
+	
+	/**
+	 * Helper method which computes the exponentially decaying gain value of
+	 * a document at the given rank.
+	 * @param rank the rank of the document, starting with 1
+	 * @return the gain value within [1, 10]
+	 */
+	private static int gain(int rank) {
+		return 1 + ((int) Math.floor(10.0 * Math.pow(0.5, 0.1 * rank)));
 	}
 	
 }

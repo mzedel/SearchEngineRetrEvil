@@ -11,7 +11,6 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.FilenameFilter;
 import java.io.IOException;
-import java.io.LineNumberReader;
 import java.io.PrintWriter;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
@@ -92,6 +91,20 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * document length.
 	 */
 	private static final double BM25_B = 0.0;
+	
+	/**
+	 * If pseudo relevance feedback is used, this is the maximum number of terms
+	 * that will be used to expand the initial query.
+	 */
+	private static final int PRF_EXPAND = 10;
+	
+	/**
+	 * Whether snippets shall be included in the result set.
+	 * If set to <tt>true</tt>, only titles will be returned.
+	 * If set to <tt>false</tt>, for each document, the title followed by the
+	 * snippet will be returned.
+	 */
+	private static final boolean PRINT_SNIPPETS = false;
 	
 	/**
 	 * Index handler for queries etc.
@@ -379,15 +392,16 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		// name of the file which stores the index
 		private static final String indexFileName = "index";
 		// name of the file which stores the seeklist
-		private static final String seekListFileName = "seeklist";
+		private static final String seekListFileName = "index_seeklist";
+		// name of the file which stores the texts (for snippets)
+		private static final String textsFileName = "texts";
+		// name of the file which stores the seeklist for the texts
+		private static final String textsSeekListFileName = "texts_seeklist";
 		// name of the file which stores the mapping of document ids and titles
 		private static final String titlesFileName = "titles";
 		// file extension
 		private static final String fileExtension = ".txt";
-		/** extended stopword list 
-		* based on: http://members.unine.ch/jacques.savoy/clef/
-		* and http://codingwiththomas.blogspot.de/2012/01/german-stop-words.html
-		*/
+		// extended stopword list 
 		private static final HashSet<String> GERMAN_STOP_WORDS = new HashSet<String>(
 			Arrays.asList(new String[] { "a", "ab", "aber", "ach", "acht", "achte",
 					"achten", "achter", "achtes", "ag", "alle", "allein", "allem", 
@@ -473,6 +487,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		// directory of files to be read / written
 		private String dir;
 		// simple counter to flush index files to avoid exceedingly high memory consumption
+
 		private int pageCount = 0;
 		private int fileCount = 0;
 		private long seekPosition = 0;
@@ -484,6 +499,8 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		private Index index;
 		// the seeklist (term - offset)
 		private Map<String, Long> seeklist;
+		// the seeklist for the texts (document id - offset)
+		private Map<Long, Long> textsSeeklist;
 		// the mapping from document ids to titles
 		private Map<Long, String> titles;
 		// the RandomAccessFile where the index will be written to
@@ -528,9 +545,13 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			catch (IOException e) { e.printStackTrace(); }
 			
 			this.seeklist = new TreeMap<String, Long>();
+			this.textsSeeklist = new TreeMap<Long, Long>();
 			this.titles = new TreeMap<Long, String>();
-			// load seeklist and mapping of titles, if so desired
-			if (load) {
+			// if a new index is to be created, delete old files (if necessary)
+			if (!load) {
+				this.deleteOldFiles();
+			} else {
+				// load seeklist and mapping of titles
 				this.loadIndex();
 			}
 		}
@@ -603,6 +624,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		/**
 		 * Add the id-title-mapping to the respective map.
 		 * Add the occurrences of all terms in the given text to the index.
+		 * Add the text to the texts file and store the offset.
 		 * If an IOException occurs, print it, but proceed.
 		 * @param id the id of the document
 		 * @param title the title of the document
@@ -624,9 +646,34 @@ public class SearchEngineRetrEvil extends SearchEngine {
 						this.byteCounter = 0;
 					}
 				}
-				this.pageCount++;
+//				this.pageCount++;
 			} catch (IOException e) {
 				// an IOException was thrown by the Analyzer
+				e.printStackTrace();
+			}
+			// handle texts file and seeklist
+			try {
+				RandomAccessFile raTextsFile = new RandomAccessFile(new File(this.dir 
+						+ IndexHandler.textsFileName 
+						+ IndexHandler.fileExtension), "rw");
+				
+				// set pointer to end of file (position of first new byte to be written)
+				raTextsFile.seek(raTextsFile.length());
+				
+				// store offset (before the text) in the seeklist of the texts file
+				this.textsSeeklist.put(id, raTextsFile.getFilePointer());
+				
+				// remove tabs from the text and add one as separator
+				String processedText = (text != null ? text : "")
+						.replace('\t', ' ')
+						.concat("\t");
+				
+				// write text of the document to the file
+				raTextsFile.writeChars(processedText);
+				
+				// close the file
+				raTextsFile.close();
+			} catch (IOException e) {
 				e.printStackTrace();
 			}
 		}
@@ -654,8 +701,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			} catch(IOException e) {
 				e.printStackTrace();
 			}
-			this.index = new Index();
-			System.out.println(this.pageCount);
 		}
 		
 		/**
@@ -669,7 +714,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		public void createIndex() {
 			try {
 				writeToIndexFile();
-				
+	
 				FilenameFilter filter = new FilenameFilter() {
 					@Override
 					public boolean accept(File dir, String name) {
@@ -739,6 +784,13 @@ public class SearchEngineRetrEvil extends SearchEngine {
 						+ IndexHandler.fileExtension);
 				
 				/*
+				 * write the seeklist of the texts file to a file
+				 */
+				writeStringifiedToFile(this.textsSeekListToString(), this.dir
+						+ IndexHandler.textsSeekListFileName
+						+ IndexHandler.fileExtension);
+				
+				/*
 				 * write the id-title-mapping to a file
 				 */
 				writeStringifiedToFile(this.titlesToString(), this.dir 
@@ -798,8 +850,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		/** 
-		 * Stringifies the seek list for writing it to a file. Uses the pattern:
-		 * 	apfel\t0\tbaum\t1608.	(\t are actual tab characters)
+		 * Stringifies the seek list for writing it to a file. Uses the pattern:<br>
+		 * <i>apfel\t0\tbaum\t1608.</i><br>
+		 * (\t are actual tab characters)
 		 * @return a string representation of the seek list
 		 */
 		private String seekListToString() {
@@ -810,6 +863,27 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					.append(term)
 					.append('\t')
 					.append(this.seeklist.get(term))
+					.append('\t');
+			}
+			// remove the last '\t'
+			result.deleteCharAt(result.lastIndexOf("\t"));
+			
+			return result.toString();
+		}
+		
+		/**
+		 * Stringifies the seek list of the texts file for writing it to a file.
+		 * Use the pattern like in {@link #seekListToString()}.
+		 * @return a string representation of the seek list of the texts file
+		 */
+		private String textsSeekListToString() {
+			StringBuilder result = new StringBuilder();
+			
+			for (Long id : this.textsSeeklist.keySet()) {	// uses iterator
+				result
+					.append(id)
+					.append('\t')
+					.append(this.textsSeeklist.get(id))
 					.append('\t');
 			}
 			// remove the last '\t'
@@ -850,10 +924,46 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				File seekListFile = new File(this.dir 
 						+ IndexHandler.seekListFileName 
 						+ IndexHandler.fileExtension);
+
 				Scanner scanner1 = new Scanner(seekListFile);
 				scanner1.useDelimiter("\\A");
 				this.parseSeekListFileString(scanner1.next());
 				scanner1.close();
+
+				RandomAccessFile raSeekListFile = new RandomAccessFile(seekListFile, "r");
+				
+				StringBuilder builder = new StringBuilder();
+				try {
+					while (true) {
+						builder.append(raSeekListFile.readChar());
+					}
+				} catch (EOFException e) {
+					// end of file: proceed
+				} finally {
+					raSeekListFile.close();
+				}
+				
+				this.parseSeekListFileString(builder.toString());
+				
+				// load the seek list of the texts file
+				File textsSeekListFile = new File(this.dir 
+						+ IndexHandler.textsSeekListFileName 
+						+ IndexHandler.fileExtension);
+				RandomAccessFile raTextsSeekListFile = new RandomAccessFile(textsSeekListFile, "r");
+				
+				builder = new StringBuilder();
+				try {
+					while (true) {
+						builder.append(raTextsSeekListFile.readChar());
+					}
+				} catch (EOFException e) {
+					// end of file: proceed
+				} finally {
+					raTextsSeekListFile.close();
+				}
+				
+				this.parseTextsSeekListFileString(builder.toString());
+				
 				// load the id-titles-mapping
 				File titlesFile = new File(this.dir 
 						+ IndexHandler.titlesFileName 
@@ -899,6 +1009,36 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		/**
+		 * Construct a seek list of the texts file from the read string. 
+		 * If an exception occurs, print it, but proceed.
+		 * @param string seek list file string
+		 */
+		private void parseTextsSeekListFileString(String string) {
+			StringTokenizer tok = new StringTokenizer(string, "\t");
+			
+			boolean isId = true;	// whether the current token is the id
+			Long id = null;
+			Long offset = null;
+			
+			while (tok.hasMoreTokens()) {
+				String token = tok.nextToken();
+				try {
+					if (isId) {
+						// parse the term
+						id = Long.parseLong(token);
+					} else {
+						// parse the term's offset and add it to the map
+						offset = Long.parseLong(token);
+						this.textsSeeklist.put(id, offset);
+					}
+					isId = !isId;
+				} catch (NumberFormatException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+		
+		/**
 		 * Construct an id-titles-mapping from the read string. If an exception occurs,
 		 * print it, but proceed.
 		 * @param string seek list file string
@@ -930,6 +1070,33 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		/**
+		 * Delete all index files which exist (as preparation for the creation
+		 * of new index files).
+		 */
+		private void deleteOldFiles() {
+			// use getErasedFile to erase the files, if they exist
+			try {
+				this.getErasedFile(dir 
+						+ IndexHandler.indexFileName 
+						+ IndexHandler.fileExtension);
+				this.getErasedFile(dir 
+					+ IndexHandler.seekListFileName 
+					+ IndexHandler.fileExtension);
+				this.getErasedFile(dir 
+					+ IndexHandler.textsFileName 
+					+ IndexHandler.fileExtension);
+				this.getErasedFile(dir 
+					+ IndexHandler.textsSeekListFileName 
+					+ IndexHandler.fileExtension);
+				this.getErasedFile(dir 
+					+ IndexHandler.titlesFileName 
+					+ IndexHandler.fileExtension);
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+		
+		/**
 		 * Tests whether the given directory has all necessary index files
 		 * (index file, seek list, id-title-mapping). If an IOException occurs,
 		 * return <tt>false</tt>.
@@ -948,6 +1115,18 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					+ IndexHandler.seekListFileName 
 					+ IndexHandler.fileExtension);
 			if (!seekListFile.canRead()) {
+				return false;
+			}
+			File textsFile = new File(dir 
+					+ IndexHandler.textsFileName 
+					+ IndexHandler.fileExtension);
+			if (!textsFile.canRead()) {
+				return false;
+			}
+			File textsSeekListFile = new File(dir 
+					+ IndexHandler.textsSeekListFileName 
+					+ IndexHandler.fileExtension);
+			if (!textsSeekListFile.canRead()) {
 				return false;
 			}
 			File titlesFile = new File(dir 
@@ -1021,6 +1200,78 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 */
 		public int totalNumberOfDocuments() {
 			return this.titles.keySet().size();
+		}
+		
+		/**
+		 * Create a snippet of the document. Look for any occurrence of a search
+		 * term and retrieve the text around that occurrence.
+		 * @param documentId the ID of the document
+		 * @param queryTerms the terms searched for
+		 * @return the snippet or <tt>null</tt> if the given id is <tt>null</tt>,
+		 *   the document is not known or an error occurs
+		 */
+		public String getSnippetForDocumentId(Long documentId, List<String> queryTerms) {
+			// catch unsuited arguments
+			if (documentId == null) {
+				return null;
+			}
+			
+			// get the file offset of the texts file
+			Long offset = this.textsSeeklist.get(documentId);
+			if (offset == null) {
+				// document is not known
+				return null;
+			}
+			
+			// read the original text of the document from the texts file
+			StringBuilder builder = new StringBuilder();
+			try {
+				// get the file
+				File textsFile = new File(this.dir + IndexHandler.textsFileName + IndexHandler.fileExtension);
+				RandomAccessFile raTextsFile = new RandomAccessFile(textsFile, "r");
+				
+				/* 
+				 * read the file until the text is finished (i.e., until the 
+				 * first '\t' or end of file
+				 */
+				raTextsFile.seek(offset);
+				try {
+					while (true) {
+						String character = String.valueOf(raTextsFile.readChar());
+						if (character.equals("\t")) {
+							break;
+						} else {
+							builder.append(character);
+						}
+					}
+				} catch (EOFException e) {
+					// continue
+				}
+				raTextsFile.close();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+			String text = builder.toString();
+			if (text == null || text.equals("")) {
+				// no text
+				return null;
+			}
+			
+			/*
+			 * Create a snippet from the text.
+			 * TODO: consider query terms; this is difficult because they are
+			 * pre-processed (which means that the text would have to be pre-
+			 * processed as well, which makes creating the snippet difficult)
+			 */
+			// simple algorithm: just use the beginning
+			int endIndex = Math.min(240, text.length());				// exclusive end index
+			int lastSpaceIndex = text.lastIndexOf(" ", (endIndex - 1));	// searching backwards
+			if (lastSpaceIndex > 180) {
+				endIndex = lastSpaceIndex;
+			}
+			return text.substring(0, endIndex)	// endIndex cannot be 0 due to a former test of text
+					.replace('\n', ' ')			// remove newlines
+					+ "...";
 		}
 		
 	}
@@ -1196,6 +1447,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		String dumpFile = new File(dir).getParent() + "/" + "deWikipediaDump.xml";
 //		String dumpFile = new File(dir).getParent() + "/" + "testDump.xml";
 
+
 		/* 
 		 * create the indexer with the target dir; this instance is only used for
 		 * creating the index, not for answering queries
@@ -1243,16 +1495,56 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			return new ArrayList<String>();
 		}
 		
-		// answer query depending on its type
+		// answer query depending on its type TODO: make sure that topK and prf are used if necessary
 		if (isBooleanQuery(query)) {
-			return processBooleanQuery(query);		// boolean query
+			return processBooleanQuery(query);			// boolean query
 		} else if (query.contains("*")) {
-			return processPrefixQuery(query);		// prefix query
+			return processPrefixQuery(query);			// prefix query
 		} else if (query.contains("'") || query.contains("\"")) {
-			return processPhraseQuery(query);		// phrase query
+			return processPhraseQuery(query);			// phrase query
 		} else {
-			return processBM25Query(query, topK);	// keyword query
+			return processBM25Query(query, topK, prf);	// keyword query
 		}
+	}
+	
+	/**
+	 * Creates a list of String representations for the documents denoted by the
+	 * given IDs.<br>
+	 * For each document, the title followed by a snippet is returned.<br>
+	 * If the given list is <tt>null</tt> or empty, an empty list is returned.
+	 * @param documentIds the IDs of the relevant documents
+	 * @param queryTerms the list of terms used in the query, used for snippet
+	 *   creation
+	 * @return a list of String representations of the relevant documents which
+	 * 	is never <tt>null</tt>
+	 */
+	private ArrayList<String> createQueryAnswerForDocuments(
+			List<Long> documentIds, List<String> queryTerms) {
+		// catch unsuited arguments
+		if (documentIds == null || documentIds.size() <= 0) {
+			return new ArrayList<String>();
+		}
+		
+		ArrayList<String> result = new ArrayList<String>(documentIds.size());
+		
+		for (Long documentId : documentIds) {
+			// get the title of the document
+			String title = this.indexHandler.titles.get(documentId);
+			
+			if (PRINT_SNIPPETS) {
+				// get a snippet of the document
+				String snippet = this.indexHandler.getSnippetForDocumentId(documentId, queryTerms);
+				
+				// store: title + newline (unless snippet is null) + snippet
+				result.add((title != null ? title : "") 
+						+ (snippet != null ? ("\n" + snippet) : ""));
+			} else {
+				// store the title only
+				result.add(title != null ? title : "");
+			}
+		}
+		
+		return result;
 	}
 	
 	/**
@@ -1357,32 +1649,19 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 */
 	private ArrayList<String> processPhraseQuery(String query) {
 		Set<String> results = new TreeSet<String>();
-		int firstIndex = query.indexOf("'") < query.indexOf("\"") ? query.indexOf("'") : query.indexOf("\"");
-		int lastIndex = query.lastIndexOf("'") > query.lastIndexOf("\"") ? query.lastIndexOf("'") : query.lastIndexOf("\"");
-		String content = query.substring(firstIndex, lastIndex);
-		String[] terms = content.split(" ");
-		List<Index.TermList> termLists = new ArrayList<Index.TermList>();
-		for(String term : terms) {
-			termLists.add(this.indexHandler.readListForTerm(term));
-		}
-//		if(!termLists.isEmpty())
-		Index.TermList resultList = new Index.TermList();
-		Index.TermList filterList = termLists.get(0);
-		// this looks really ugly - 	
-		for(Index.TermList list : termLists) {
-			for(Entry<Long, Collection<Integer>> occurrence : list.occurrences.entrySet()) {
-				if(filterList.getOccurrences().containsKey(occurrence.getKey())) {
-					for(int position : filterList.getOccurrences().get(occurrence.getKey())) {
-						if(occurrence.getValue().contains(position + 1))
-							resultList.addOccurrence(occurrence.getKey(), position + 1);
-					}
-				}
-			}
-			filterList = resultList;
-			resultList.getOccurrences().clear();
-		}
-		for(Long documentId : filterList.getOccurrences().keySet())
-			results.add(this.indexHandler.titles.get(documentId));
+//		int firstIndex = query.indexOf("'") < query.indexOf("\"") ? query.indexOf("'") : query.indexOf("\"");
+//		int lastIndex = query.lastIndexOf("'") > query.lastIndexOf("\"") ? query.lastIndexOf("'") : query.lastIndexOf("\"");
+//		String content = query.substring(firstIndex, lastIndex);
+//		String[] terms = content.split(" ");
+//		List<Index.TermList> termLists = new ArrayList<Index.TermList>();
+//		for(String term : terms) {
+//			termLists.add(this.indexHandler.readListForTerm(term));
+//		}
+//		for(Index.TermList list : termLists) {
+//			for(Entry<Long, Collection<Integer>> occurrence : list.occurrences.entrySet()) {
+//				if(occurrence.)
+//			}
+//		}
 		return new ArrayList<String>(results);
 	}
 	
@@ -1431,148 +1710,327 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * There is <b>no</b> relevance information about documents, so the corresponding
 	 * variables <tt>r</tt> and <tt>R</tt> are treated as 0.<br>
 	 * Uses the parameters {@link #BM25_K1}, {@link #BM25_K2}, {@link #BM25_B}
-	 * to regulate the weighting of term frequencies.
+	 * to regulate the weighting of term frequencies.<br><br>
+	 * 
+	 * If <tt>prf</tt> is greater than <tt>0</tt>, pseudo relevance feedback is
+	 * used.
 	 * @param query the query text
 	 * @param topK the maximum number of titles to return
+	 * @param prf use pseudo relevance feedback using the top <tt>prf</tt> documents
+	 *   (if it is <tt>0</tt>, no pseudo relevance feedback is used)
 	 * @return a list of titles of ranked documents
 	 */
-	private ArrayList<String> processBM25Query(String query, int topK) {
-		ArrayList<String> titles = new ArrayList<String>();
+	private ArrayList<String> processBM25Query(String query, int topK, int prf) {
+		ArrayList<String> result = new ArrayList<String>();
 		
 		try {
-			// pre-process the query
+			// pre-process the query to get the query terms
 			List<String> terms = this.indexHandler.processRawText(query);
-			// if there are no tokens, return an empty result set
-			if (terms.size() == 0) {
-				return titles;
-			}
 			
-			// read index file: get lists of occurrences for all query terms
-			Map<String, Index.TermList> termListMap = new HashMap<String, Index.TermList>();
-			for (String term : terms) {
-				if (termListMap.containsKey(term)) {
-					continue;	// already got the list for this term
-				}
-				// add (term, termList) to the map; termList is never null
-				termListMap.put(term, this.indexHandler.readListForTerm(term));
-			}
-			
-			/*
-			 * Compute variable n (number of documents containing a term) per 
-			 * term by parsing the occurrences. Use this opportunity to compute
-			 * variable qf (frequency of term in the query) per term. Also get the
-			 * set of all documents containing any query term.
-			 */
-			Map<String, Integer> termDocumentCountMap = new HashMap<String, Integer>();
-			Map<String, Integer> termQueryFrequency = new HashMap<String, Integer>();
-			Set<Long> documentIds = new HashSet<Long>();	// HashSet: no repetitions
-			for (String term : terms) {
-				// increment frequency
-				Integer frequency = termQueryFrequency.get(term);	// null if not set yet
-				termQueryFrequency.put(term, frequency != null ? frequency + 1 : 1);
+			if (prf == 0) {
+				// no pseudo relevance feedback
 				
-				/*
-				 * Get ids of documents in which the term occurs as well as the
-				 * number of documents containing the term (once per term)
-				 */
-				if (!termDocumentCountMap.containsKey(term)) {
-					// add the set of document ids
-					documentIds.addAll(termListMap.get(term).getOccurrences().keySet());
-					// put the document ids count
-					Integer documentCount = termListMap.get(term)	// termList is never null, even if the term is unknown
-							.getOccurrences()						// never null either, as initialized at creation
-							.keySet()								// dito
-							.size();								// >= 0
-					termDocumentCountMap.put(term, documentCount);
-				}
-			}
-
-			// get N (the total number of documents)
-			final int N = this.indexHandler.totalNumberOfDocuments();
-			
-			// get the set of query terms (without duplicates)
-			Set<String> uniqueTerms = new HashSet<String>();
-			uniqueTerms.addAll(terms);
-			
-			// Rank each document which contains at least one query term
-			Map<Double, Long> scoreDocumentMap = new TreeMap<Double, Long>();	// ordered by score
-			for (Long documentId : documentIds) {
-				Double score = 0.0;	// score of this document
+				// get the IDs of the topK most relevant documents
+				ArrayList<Long> ids = this.processInnerBM25Query(terms, topK);
 				
-				/*
-				 * Compute K (length normalization parameter).
-				 * Note that this would normally be more complicated, including
-				 * the document length and average document length, but as long 
-				 * as BM25_B is set to 0, that does not matter.
-				 */
-				double K = BM25_K1 * (1 - BM25_B);
+				result = this.createQueryAnswerForDocuments(ids, terms);
+			} else {
+				// pseudo relevance feedback
 				
-				// compute and add the score for each query term
-				for (String term : uniqueTerms) {
-					// R, r = 0
-					// n: number of documents containing the term
-					int n = termDocumentCountMap.get(term);		// must not be null
-					// f: frequency of the term in the document
-					// get the positions of this term for this document
-					Collection<Integer> termDocPositions = termListMap
-							.get(term)							// never null, even if term is not known
-							.getOccurrences()					// never null, at least initialized
-							.get(documentId);					// may be null
-					// if there are positions, get their count
-					int f = termDocPositions != null 
-							? termDocPositions.size() 
-							: 0;
-					// qf: frequency of the term in the query
-					int qf = termQueryFrequency.get(term);  	// must not be null
-					
-					/*
-					 * Compute the score. Note: for very few documents, the first
-					 * factor (log ...) can be 0 (when ... is 1). Here, the natural
-					 * logarithm is used (because Math offers it), but the base
-					 * does not really matter.
-					 */
-					score += (Math.log(1.0 / ((n + 0.5) / ((N - n) + 0.5)))
-							* (((BM25_K1 + 1.0) * f) / (K + f))
-							* (((BM25_K2 + 1.0) * qf) / (BM25_K2 + qf)));
-				}
+				// get the IDs of the prf most relevant documents
+				ArrayList<Long> ids = this.processInnerBM25Query(terms, prf);
 				
-				// make sure that the scores are unique to avoid problems with the map
-				while (scoreDocumentMap.containsKey(score)) {
-					score -= 1e-10;	// slightly decrease the score (this is sloppy, but works)
-				}
+				// get the snippets
+				ArrayList<String> snippets = this.createQueryAnswerForDocuments(ids, terms);
 				
-				// store the score
-				scoreDocumentMap.put(score, documentId);
-			}
-
-			// get the scores in descending order
-			List<Double> descendingScores = new ArrayList<Double>();
-			for (Double score : scoreDocumentMap.keySet()) {	// uses iterator
-				descendingScores.add(0, score);
-			}
-			
-			// get the titles of the topK best documents
-			for (int i = 0; i < topK; i++) {
-				if (i < descendingScores.size()) {
-					Double score = descendingScores.get(i);
-					Long documentId = scoreDocumentMap.get(score);
-					String title = this.indexHandler.titles.get(documentId);	// must not be null
-					titles.add(title);
-				} else {
-					break;
-				}
+				// use the snippets to expand the query
+				terms = this.expandQueryTerms(terms, snippets);
+				
+				// reevaluate the expanded query and get the topK most relevant documents
+				ids = this.processInnerBM25Query(terms, topK);
+				
+				result = this.createQueryAnswerForDocuments(ids, terms);
 			}
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
 		
-		return titles;
+		return result;
+	}
+	
+	/**
+	 * Helper method to expand the given (pre-processed) query terms using the
+	 * snippets of relevant documents as part of the integration of pseudo 
+	 * relevance feedback into the query engine.
+	 * @param terms query terms of the initial query
+	 * @param snippets snippets of documents which were relevant for the initial query
+	 * @return an enhanced list of query terms for the next query
+	 */
+	private ArrayList<String> expandQueryTerms(List<String> terms, List<String> snippets) throws IOException {
+		ArrayList<String> expandedTerms = new ArrayList<String>();
+		
+		// add initial terms
+		expandedTerms.addAll(terms);
+		
+		// pre-process snippets
+		ArrayList<List<String>> processedSnippets = new ArrayList<List<String>>(snippets.size());
+		for (String snippet : snippets) {
+			processedSnippets.add(this.indexHandler.processRawText(snippet));
+		}
+		
+		// count terms in all snippets
+		Map<String, Double> termCountMap = new TreeMap<String, Double>();
+		for (List<String> processedSnippet : processedSnippets) {
+			for (String term : processedSnippet) {
+				if (expandedTerms.contains(term)) {
+					// term is already used
+					continue;
+				}
+				if (termCountMap.containsKey(term)) {
+					// increment count
+					termCountMap.put(term, termCountMap.get(term) + 1.0);
+				} else {
+					// initial count of 1
+					termCountMap.put(term, 1.0);
+				}
+			}
+		}
+		
+		// order by count, slightly change count if necessary to avoid overrides
+		Map<Double, String> sortedTerms = new TreeMap<Double, String>();
+		for (String term : termCountMap.keySet()) {
+			Double count = termCountMap.get(term);
+			while (sortedTerms.containsKey(count)) {
+				count -= 1e-10;
+			}
+			sortedTerms.put(count, term);
+		}
+		
+		// get the reverse order of counts
+		List<Double> reverseCounts = new ArrayList<Double>();
+		for (Double key : sortedTerms.keySet()) {	// keySet of a TreeMap is ordered
+			reverseCounts.add(0, key);
+		}
+		
+		// expand the query terms using a particular maximum of new terms
+		int newTermsCount = 0;
+		for (Double key : reverseCounts) {
+			expandedTerms.add(sortedTerms.get(key));
+			newTermsCount++;
+			if (newTermsCount >= PRF_EXPAND) {
+				break;
+			}
+		}
+
+		return expandedTerms;
+	}
+	
+	/**
+	 * Helper method to perform the actual BM25 query, see 
+	 * {@link #processBM25Query(String, int, int)}.
+	 */
+	private ArrayList<Long> processInnerBM25Query(List<String> terms, int topK) {
+		ArrayList<Long> result = new ArrayList<Long>();
+
+		// if there are no terms, return an empty result set
+		if (terms.size() == 0) {
+			return result;
+		}
+
+		// read index file: get lists of occurrences for all query terms
+		Map<String, Index.TermList> termListMap = new HashMap<String, Index.TermList>();
+		for (String term : terms) {
+			if (termListMap.containsKey(term)) {
+				continue;	// already got the list for this term
+			}
+			// add (term, termList) to the map; termList is never null
+			termListMap.put(term, this.indexHandler.readListForTerm(term));
+		}
+
+		/*
+		 * Compute variable n (number of documents containing a term) per 
+		 * term by parsing the occurrences. Use this opportunity to compute
+		 * variable qf (frequency of term in the query) per term. Also get the
+		 * set of all documents containing any query term.
+		 */
+		Map<String, Integer> termDocumentCountMap = new HashMap<String, Integer>();
+		Map<String, Integer> termQueryFrequency = new HashMap<String, Integer>();
+		Set<Long> documentIds = new HashSet<Long>();	// HashSet: no repetitions
+		for (String term : terms) {
+			// increment frequency
+			Integer frequency = termQueryFrequency.get(term);	// null if not set yet
+			termQueryFrequency.put(term, frequency != null ? frequency + 1 : 1);
+
+			/*
+			 * Get ids of documents in which the term occurs as well as the
+			 * number of documents containing the term (once per term)
+			 */
+			if (!termDocumentCountMap.containsKey(term)) {
+				// add the set of document ids
+				documentIds.addAll(termListMap.get(term).getOccurrences().keySet());
+				// put the document ids count
+				Integer documentCount = termListMap.get(term)	// termList is never null, even if the term is unknown
+						.getOccurrences()						// never null either, as initialized at creation
+						.keySet()								// dito
+						.size();								// >= 0
+				termDocumentCountMap.put(term, documentCount);
+			}
+		}
+
+		// get N (the total number of documents)
+		final int N = this.indexHandler.totalNumberOfDocuments();
+
+		// get the set of query terms (without duplicates)
+		Set<String> uniqueTerms = new HashSet<String>();
+		uniqueTerms.addAll(terms);
+
+		// Rank each document which contains at least one query term
+		Map<Double, Long> scoreDocumentMap = new TreeMap<Double, Long>();	// ordered by score
+		for (Long documentId : documentIds) {
+			Double score = 0.0;	// score of this document
+
+			/*
+			 * Compute K (length normalization parameter).
+			 * Note that this would normally be more complicated, including
+			 * the document length and average document length, but as long 
+			 * as BM25_B is set to 0, that does not matter.
+			 */
+			double K = BM25_K1 * (1 - BM25_B);
+
+			// compute and add the score for each query term
+			for (String term : uniqueTerms) {
+				// R, r = 0
+				// n: number of documents containing the term
+				int n = termDocumentCountMap.get(term);		// must not be null
+				// f: frequency of the term in the document
+				// get the positions of this term for this document
+				Collection<Integer> termDocPositions = termListMap
+						.get(term)							// never null, even if term is not known
+						.getOccurrences()					// never null, at least initialized
+						.get(documentId);					// may be null
+				// if there are positions, get their count
+				int f = termDocPositions != null 
+						? termDocPositions.size() 
+								: 0;
+						// qf: frequency of the term in the query
+						int qf = termQueryFrequency.get(term);  	// must not be null
+
+						/*
+						 * Compute the score. Note: for very few documents, the first
+						 * factor (log ...) can be 0 (when ... is 1). Here, the natural
+						 * logarithm is used (because Math offers it), but the base
+						 * does not really matter.
+						 */
+						score += (Math.log(1.0 / ((n + 0.5) / ((N - n) + 0.5)))
+								* (((BM25_K1 + 1.0) * f) / (K + f))
+								* (((BM25_K2 + 1.0) * qf) / (BM25_K2 + qf)));
+			}
+
+			// make sure that the scores are unique to avoid problems with the map
+			while (scoreDocumentMap.containsKey(score)) {
+				score -= 1e-10;	// slightly decrease the score (this is sloppy, but works)
+			}
+
+			// store the score
+			scoreDocumentMap.put(score, documentId);
+		}
+
+		// get the scores in descending order
+		List<Double> descendingScores = new ArrayList<Double>();
+		for (Double score : scoreDocumentMap.keySet()) {	// uses iterator
+			descendingScores.add(0, score);
+		}
+
+		// get the IDs of the topK best documents
+		for (int i = 0; i < topK; i++) {
+			if (i < descendingScores.size()) {
+				Double score = descendingScores.get(i);
+				result.add(scoreDocumentMap.get(score));
+			} else {
+				break;
+			}
+		}
+
+		return result;
 	}
 
+	/**
+	 * Compute the Normalized Discounted Cumulative Gain for the given ranking
+	 * and ideal ranking at the given position.<br>
+	 * 
+	 * Relevance: assume binary relevance, i.e., all documents in the goldRanking
+	 * are relevant and documents in the actual ranking are relevant if and only
+	 * if they are also listed in the goldRanking.
+	 * @param goldRanking the ideal ranking of document titles
+	 * @param myRanking the actual ranking of document titles
+	 * @param at the rank for which the value is to be computed, counting
+	 *   from 1 (highest ranking document), or <tt>null</tt> if an argument is
+	 *   invalid (i.e., at < 1 or goldRanking or myRanking are <tt>null</tt> or 
+	 *   empty); the actual rank which is used is min{at, goldRanking.size, myRanking.size}
+	 */
 	@Override
-	Double computeNdcg(String query, ArrayList<String> ranking, int ndcgAt) {
-		// TODO Auto-generated method stub
-		return null;
+	Double computeNdcg(ArrayList<String> goldRanking, ArrayList<String> myRanking, int at) {
+		// catch invalid arguments
+		if (goldRanking == null || goldRanking.size() == 0 
+				|| myRanking == null || myRanking.size() == 0
+				|| at < 1) {
+			return null;
+		}
+		at = Math.min(Math.min(goldRanking.size(), myRanking.size()), at);
+		
+		// create list of relevance values for the actual ranking
+		double[] actualRelevance = new double[at];	// up to the desired rank
+		for (int i = 0; i < at; i++) {
+			/* 
+			 * assume binary relevance where a document is relevant if and only
+			 * if it is in the ideal ranking, regardless of position
+			 */
+			actualRelevance[i] = goldRanking.contains(myRanking.get(i)) ? 1.0 : 0.0;
+		}
+		
+		// create list of relevance values for the ideal ranking
+		double[] idealRelevance = new double[at];	// up to the desired rank
+		for (int i = 0; i < at; i++) {
+			/*
+			 * assume binary relevance where every document within the ideal
+			 * ranking is relevant
+			 */
+			idealRelevance[i] = 1;
+		}
+		return ndcg(actualRelevance, idealRelevance);
+	}
+	
+	/**
+	 * Helper method which computes the Normalized Discounted Cumulative Gain
+	 * for arrays of relevance values from the actual and an ideal ranking at
+	 * the last position.
+	 * @param actualRelevance relevance values for the actual ranking
+	 * @param idealRelevance relevance values for the ideal ranking
+	 * @return the NDCG at the last position
+	 */
+	private static double ndcg(double[] actualRelevance, double[] idealRelevance) {
+		// initialize DCGs
+		double actualDcg = 0.0;
+		double idealDcg = 0.0;
+		
+		// compute the DCGs
+		for (int i = 0; i < actualRelevance.length; i++) {
+			actualDcg += (actualRelevance[i] * gain(i + 1));
+			idealDcg += (idealRelevance[i] * gain(i + 1));
+		}
+		
+		// return the NDCG
+		return actualDcg / idealDcg;
+	}
+	
+	/**
+	 * Helper method which computes the exponentially decaying gain value of
+	 * a document at the given rank.
+	 * @param rank the rank of the document, starting with 1
+	 * @return the gain value within [1, 10]
+	 */
+	private static int gain(int rank) {
+		return 1 + ((int) Math.floor(10.0 * Math.pow(0.5, 0.1 * rank)));
 	}
 	
 }

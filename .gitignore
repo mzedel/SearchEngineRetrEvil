@@ -16,6 +16,7 @@ hs_err_pid*
 
 # output
 wikipedia/SearchEngineRetrEvil/
+wikipedia/wikiQueryResults/
 
 # folders from assignments
 */home/*

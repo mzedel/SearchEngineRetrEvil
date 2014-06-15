@@ -669,7 +669,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 						.concat("\t");
 				
 				// write text of the document to the file
-				raTextsFile.writeChars(processedText);
+				raTextsFile.writeBytes(processedText);
 				
 				// close the file
 				raTextsFile.close();
@@ -929,40 +929,16 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				scanner1.useDelimiter("\\A");
 				this.parseSeekListFileString(scanner1.next());
 				scanner1.close();
-
-				RandomAccessFile raSeekListFile = new RandomAccessFile(seekListFile, "r");
-				
-				StringBuilder builder = new StringBuilder();
-				try {
-					while (true) {
-						builder.append(raSeekListFile.readChar());
-					}
-				} catch (EOFException e) {
-					// end of file: proceed
-				} finally {
-					raSeekListFile.close();
-				}
-				
-				this.parseSeekListFileString(builder.toString());
 				
 				// load the seek list of the texts file
 				File textsSeekListFile = new File(this.dir 
 						+ IndexHandler.textsSeekListFileName 
 						+ IndexHandler.fileExtension);
-				RandomAccessFile raTextsSeekListFile = new RandomAccessFile(textsSeekListFile, "r");
 				
-				builder = new StringBuilder();
-				try {
-					while (true) {
-						builder.append(raTextsSeekListFile.readChar());
-					}
-				} catch (EOFException e) {
-					// end of file: proceed
-				} finally {
-					raTextsSeekListFile.close();
-				}
-				
-				this.parseTextsSeekListFileString(builder.toString());
+				Scanner scanner2 = new Scanner(textsSeekListFile);
+				scanner2.useDelimiter("\\A");
+				this.parseTextsSeekListFileString(scanner2.next());
+				scanner2.close();
 				
 				// load the id-titles-mapping
 				File titlesFile = new File(this.dir 
@@ -1014,14 +990,14 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 * @param string seek list file string
 		 */
 		private void parseTextsSeekListFileString(String string) {
-			StringTokenizer tok = new StringTokenizer(string, "\t");
-			
+			Scanner tok = new Scanner(string);
+			tok.useDelimiter("\t");
 			boolean isId = true;	// whether the current token is the id
 			Long id = null;
 			Long offset = null;
 			
-			while (tok.hasMoreTokens()) {
-				String token = tok.nextToken();
+			while (tok.hasNext()) {
+				String token = tok.next();
 				try {
 					if (isId) {
 						// parse the term
@@ -1036,6 +1012,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					e.printStackTrace();
 				}
 			}
+			tok.close();
 		}
 		
 		/**
@@ -1339,13 +1316,13 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					log("");
 				}
 			}
-			if (this.indexer.pageCount == 3001)
-				try {
-					endDocument();
-				} catch (SAXException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				}
+//			if (this.indexer.pageCount == 3001)
+//				try {
+//					endDocument();
+//				} catch (SAXException e) {
+//					// TODO Auto-generated catch block
+//					e.printStackTrace();
+//				}
 		}
 
 		@Override
@@ -1446,7 +1423,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		// get dump file TODO: make that more general
 		String dumpFile = new File(dir).getParent() + "/" + "deWikipediaDump.xml";
 //		String dumpFile = new File(dir).getParent() + "/" + "testDump.xml";
-
 
 		/* 
 		 * create the indexer with the target dir; this instance is only used for

@@ -701,6 +701,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			} catch(IOException e) {
 				e.printStackTrace();
 			}
+			this.index = new Index();
 		}
 		
 		/**

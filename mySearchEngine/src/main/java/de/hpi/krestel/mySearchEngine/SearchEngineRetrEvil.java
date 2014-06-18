@@ -49,8 +49,12 @@ import org.xml.sax.helpers.DefaultHandler;
  *  - stopword removal?
  *  - index algorithm?
  *  - etc.
+ *  
+ *  - We use Lucene for pre-processing documents and queries (lower case,
+ *    tokenizing, stemming, stopword removal using a newer german list)
+ *  - Redirection pages are not indexed to begin with. Therefore, they are not
+ *    considered in the ranking (of other documents) either.
  */
-
 public class SearchEngineRetrEvil extends SearchEngine {
 	
 	/**

@@ -663,8 +663,8 @@ public class SearchEngineRetrEvil extends SearchEngine {
 						.replace('\t', ' ')
 						.concat("\t");
 				
-				// write text of the document to the file
-				raTextsFile.writeBytes(processedText);
+				// write text of the document to the file (2 bytes per char)
+				raTextsFile.writeChars(processedText);;
 				
 				// close the file
 				raTextsFile.close();

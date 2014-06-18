@@ -15,7 +15,6 @@ import java.io.PrintWriter;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Base64;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -28,6 +27,7 @@ import java.util.StringTokenizer;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
+import javax.xml.bind.DatatypeConverter;
 import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 
@@ -56,15 +56,15 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	/**
 	 * Boolean operator "AND" in upper case
 	 */
-	private static final String AND = "AND";
+	private static final String AND = " AND ";
 	/**
 	 * Boolean operator "OR" in upper case
 	 */
-	private static final String OR = "OR";
+	private static final String OR = " OR ";
 	/**
 	 * Boolean operator "BUT NOT" in upper case
 	 */
-	private static final String BUT_NOT = "BUT NOT";
+	private static final String BUT_NOT = " BUT NOT ";
 	/**
 	 * List of all boolean operators (for convenience)
 	 */
@@ -104,7 +104,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * If set to <tt>false</tt>, for each document, the title followed by the
 	 * snippet will be returned.
 	 */
-	private static final boolean PRINT_SNIPPETS = false;
+	private static final boolean PRINT_SNIPPETS = true;
 	
 	/**
 	 * Index handler for queries etc.
@@ -122,8 +122,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * Index uses {@link TreeMap}, whose keys are ordered, to provide the
 	 * ordering of terms.
 	 * This is a utility class. It does not check for null values.
-	 * 
-	 * TODO: implement merging of Index / TermList parts
 	 */
 	private static class Index {
 		
@@ -279,7 +277,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				for (Long documentId : this.occurrences.keySet()) {	// uses iterator
 					if (isFirstOccurence && isIndexing) {
 						// encode term as base64 to avoid .,-: etc...
-						bo.write(Base64.getEncoder().encode(term.getBytes()));
+						bo.write(DatatypeConverter.printBase64Binary(term.getBytes()).getBytes());
 						bo.write(Index.TermList.colon);
 					}
 					if (!isFirstOccurence) bo.write(Index.TermList.semi);
@@ -384,8 +382,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * Merges everything into the final index file once the SAXHandler has
 	 * finished parsing.
 	 * (in the future:) Provides information for the query engine.
-	 * 
-	 * TODO: implement writing / merging of Index parts to avoid memory problems
 	 */
 	private static class IndexHandler {
 		
@@ -488,7 +484,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		private String dir;
 		// simple counter to flush index files to avoid exceedingly high memory consumption
 
-		private int pageCount = 0;
 		private int fileCount = 0;
 		private long seekPosition = 0;
 		
@@ -706,7 +701,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		
 		/**
 		 * Merges all parts of the index.
-		 * TODO: implement merging
 		 * Creates the seeklist.
 		 * Writes the index, the seeklist and the id-titles-mapping to 
 		 * files (one file each).
@@ -768,7 +762,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					this.raIndexFile = new RandomAccessFile(indexFile, "rw");
 					this.fos = new FileOutputStream(raIndexFile.getFD());
 					this.bo = new BufferedOutputStream(fos);
-					list.term = new String(Base64.getDecoder().decode(list.term));
+					list.term = new String(DatatypeConverter.parseBase64Binary(list.term));
 					raIndexFile.seek(this.seekPosition);
 					this.seeklist.put(list.term, this.seekPosition);
 //					System.out.println("Term: " + list.term + " Size: " + list.occurrences.size());
@@ -1027,7 +1021,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			boolean isId = true;	// whether the current token is the id
 			Long id = null;
 			String title = null;
-			System.out.println(string);
 			while (tok.hasNext()) {
 				String token = tok.next();
 				try {
@@ -1317,13 +1310,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					log("");
 				}
 			}
-//			if (this.indexer.pageCount == 3001)
-//				try {
-//					endDocument();
-//				} catch (SAXException e) {
-//					// TODO Auto-generated catch block
-//					e.printStackTrace();
-//				}
 		}
 
 		@Override
@@ -1421,9 +1407,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			dir = dir.concat("/");
 		}
 		
-		// get dump file TODO: make that more general
-		String dumpFile = new File(dir).getParent() + "/" + "deWikipediaDump.xml";
-//		String dumpFile = new File(dir).getParent() + "/" + "testDump.xml";
+		// get dump file
+//		String dumpFile = new File(dir).getParent() + "/" + "deWikipediaDump.xml";
+		String dumpFile = new File(dir).getParent() + "/" + "testDump.xml";
 
 		/* 
 		 * create the indexer with the target dir; this instance is only used for

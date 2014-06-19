@@ -18,6 +18,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -481,6 +482,38 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					"zum", "zunächst", "zur", "zurück", "zusammen", "zwanzig", "zwar", 
 					"zwei", "zweite", "zweiten", "zweiter", "zweites", "zwischen", "zwölf" }));
 		
+		/*
+		 * Insertion-ordered map of regular expressions which are used to remove
+		 * the syntax from documents in order to create nice snippets.
+		 * Lists (* ..., # ...) are not removed.
+		 */
+		private static final Map<String, String> patterns = new LinkedHashMap<String, String>();
+		static {
+			patterns.put("'''", "");						// bold
+			patterns.put("''", "");							// italic
+			patterns.put("==+", "");						// headings
+			patterns.put("\\[\\[[^|\\]]+\\|", "");			// internal links
+			patterns.put("\\[\\[Datei:[^\\]]*\\]\\]", "");	// files (delete content)
+			patterns.put("\\[\\[", "");
+			patterns.put("\\]\\]", "");
+			patterns.put("\\[\\w+://[^\\s]+\\s", "");		// external links
+			patterns.put("\\[", "");
+			patterns.put("\\]", "");
+			patterns.put("\\{\\{[^}]*\\}\\}", "...");		// special internal links (delete content)
+			patterns.put("\\{\\{", "");
+			patterns.put("\\}\\}", "");
+			patterns.put("\\{[^}]*\\}", "");				// templates (delete content)
+			patterns.put("\\|(.*)\n", "");
+			patterns.put("<gallery>[^<]*</gallery>", "");	// galleries (delete content)
+			patterns.put("<ref>[^<]*</ref>", "");			// references (delete content)
+			patterns.put("#WEITERLEITUNG", "");				// redirection (should not happen anyway)
+			patterns.put("<[^>]*>", "");					// arbitrary tags
+			patterns.put("\n(.*):\\\\mathrm(.*)\n", "\n");	// formulas
+			patterns.put("  ", "");							// double spaces
+			patterns.put("\n ", "\n");						// newline followed by space
+			patterns.put("\n\n\n", "\n\n");					// triple newlines
+		}
+		
 		private static final int THRESHOLD = 64 * 1024 * 1024;
 		private int byteCounter = 0;
 		
@@ -599,7 +632,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			 * CharTermAttribute refers to the string values of terms in the text
 			 * which is the only thing that is of interest for us.
 			 */
-//			System.out.println("---- Text ---- : "+ text);
 			TokenStream stream = this.analyzer.tokenStream("fieldName", text);
 			CharTermAttribute termAtt = stream.addAttribute(CharTermAttribute.class);
 			GermanStemFilter stemFilter = new GermanStemFilter(stream);
@@ -630,8 +662,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 * @param text the text of the document
 		 */
 		public void indexPage(Long id, String title, String text) {
-			// note id - title - mapping
+			// id - title - mapping
 			this.titles.put(id, title);
+			
+			// indexing
 			try {
 				// process text (tokenizing, stopping, stemming)
 				List<String> terms = this.processRawText(text);
@@ -645,12 +679,12 @@ public class SearchEngineRetrEvil extends SearchEngine {
 						this.byteCounter = 0;
 					}
 				}
-//				this.pageCount++;
 			} catch (IOException e) {
 				// an IOException was thrown by the Analyzer
 				e.printStackTrace();
 			}
-			// handle texts file and seeklist
+			
+			// texts file and its seeklist
 			try {
 				RandomAccessFile raTextsFile = new RandomAccessFile(new File(this.dir 
 						+ IndexHandler.textsFileName 
@@ -662,19 +696,39 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				// store offset (before the text) in the seeklist of the texts file
 				this.textsSeeklist.put(id, raTextsFile.getFilePointer());
 				
-				// remove tabs from the text and add one as separator
-				String processedText = (text != null ? text : "")
-						.replace('\t', ' ')
-						.concat("\t");
-				
-				// write text of the document to the file (2 bytes per char)
-				raTextsFile.writeChars(processedText);;
+				// write clean text of the document to the file (2 bytes per char)
+				raTextsFile.writeChars(cleanPageText(text));;
 				
 				// close the file
 				raTextsFile.close();
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
+		}
+		
+		/**
+		 * Prepare the given text of a document for snippet creation, i.e., 
+		 * remove all markup. Also, prepare it for being written to the texts
+		 * file, i.e., replace tabs in the text and append a tab to it as 
+		 * delimiter.
+		 * @param text the text of a document
+		 * @return text prepared for the texts file
+		 */
+		private String cleanPageText(String text) {
+			// remove tabs from the text and add one as separator
+			String processedText = (text != null ? text : "")
+					.replace('\t', ' ')
+					.concat("\t");
+			
+
+			
+			// remove matches
+			for (String pattern : patterns.keySet()) {
+				processedText = processedText.replaceAll(pattern, patterns.get(pattern));
+			}
+			
+			// return with removed leading / trailing whitespace
+			return processedText.trim();
 		}
 		
 		private void writeToIndexFile() {

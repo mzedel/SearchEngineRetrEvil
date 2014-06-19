@@ -1,7 +1,7 @@
 package de.hpi.krestel.mySearchEngine;
 
 import java.io.BufferedOutputStream;
-import java.io.BufferedReader;
+//import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.EOFException;
 import java.io.File;
@@ -11,10 +11,12 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.FilenameFilter;
 import java.io.IOException;
-import java.io.PrintWriter;
+import java.io.LineNumberReader;
+//import java.io.PrintWriter;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -492,14 +494,14 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			patterns.put("'''", "");						// bold
 			patterns.put("''", "");							// italic
 			patterns.put("==+", "");						// headings
-			patterns.put("\\[\\[[^|\\]]+\\|", "");			// internal links
 			patterns.put("\\[\\[Datei:[^\\]]*\\]\\]", "");	// files (delete content)
+			patterns.put("\\[\\[[^|\\]]+\\|", "");			// internal links
 			patterns.put("\\[\\[", "");
 			patterns.put("\\]\\]", "");
 			patterns.put("\\[\\w+://[^\\s]+\\s", "");		// external links
 			patterns.put("\\[", "");
 			patterns.put("\\]", "");
-			patterns.put("\\{\\{[^}]*\\}\\}", "...");		// special internal links (delete content)
+			patterns.put("\\{\\{[^}]*\\}\\}", "");		// special internal links (delete content)
 			patterns.put("\\{\\{", "");
 			patterns.put("\\}\\}", "");
 			patterns.put("\\{[^}]*\\}", "");				// templates (delete content)
@@ -514,7 +516,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			patterns.put("\n\n\n", "\n\n");					// triple newlines
 		}
 		
-		private static final int THRESHOLD = 64 * 1024 * 1024;
+		private static final int THRESHOLD = 160 * 1024 * 1024;
 		private int byteCounter = 0;
 		
 		// directory of files to be read / written
@@ -771,30 +773,39 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				FilenameFilter filter = new FilenameFilter() {
 					@Override
 					public boolean accept(File dir, String name) {
-						return name.startsWith(IndexHandler.indexFileName + "_") && !name.endsWith(".tmp");
+						return name.startsWith(IndexHandler.indexFileName + "_");// && !name.endsWith(".tmp");
 					}
 				};
 				File directory = new File(this.dir);
+				HashMap<File, BitSet> doneLines = new HashMap<File, BitSet>();
+				HashMap<File, Integer> sizes = new HashMap<File, Integer>();
 				while (directory.listFiles(filter).length > 0) {
 					File[] filesInFolder = directory.listFiles(filter);
 					String indexString = "";
 					String line = "foo";
 					Index.TermList list = new Index.TermList();
 					boolean isFirstFile = true;
+					
 				    for (File fileEntry : filesInFolder) {
 				    	boolean found = false;
-				    	BufferedReader rd = new BufferedReader(new FileReader(fileEntry));
+			    		if(doneLines.get(fileEntry) == null) {
+			    			int lines = getLineCount(fileEntry);
+		    				doneLines.put(fileEntry, new BitSet(lines));
+		    				sizes.put(fileEntry, lines);
+			    		}
+			    		BitSet check = doneLines.get(fileEntry);
+//				    	BufferedReader rd = new BufferedReader(new FileReader(fileEntry));
+				    	LineNumberReader rd = new LineNumberReader(new FileReader(fileEntry));
 				    	while ((line = rd.readLine()) != null) {
+				    		if (check.get(rd.getLineNumber())) continue;
+				    		
 				    		if (isFirstFile) {
 					            list.term = line.substring(0, line.indexOf(":"));
 					            isFirstFile = false;
-					    	} 
-				    		found = line.startsWith(list.term);
-//				    		System.out.println("term: " +list.term + " Line: " + line + " found: " + found + " File: " + fileEntry);
+					    	}
 				    		
+				    		found = line.startsWith(list.term);
 				    		if (found) {
-//				    			System.out.println("term: " +list.term + " Line: " + line + " found: " + found + " File: " + fileEntry);
-//				    			System.out.println(found);
 				    			indexString = line.substring(line.indexOf(":") + 1);
 				    			Map <Long, Collection<Integer> > asd = Index.TermList.createFromIndexString(indexString).occurrences;
 				    			for(Long key : asd.keySet()) {
@@ -802,12 +813,18 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				    			        list.occurrences.get(key).addAll(asd.get(key));
 				    			    else list.occurrences.put(key,asd.get(key));
 				    			}
-					    		break;
+				    			check.set(rd.getLineNumber());
+				    			break;
 				    		}
 				    	}
 				    	rd.close();
-			    		removeStringFromFile(list.term, fileEntry.getAbsolutePath());
-				    	if (fileEntry.length() == 0) fileEntry.delete();
+//			    		removeStringFromFile(list.term, fileEntry.getAbsolutePath());
+//				    	if (fileEntry.length() == 0) fileEntry.delete();
+				    	if (found) {
+//				    		System.out.println(check.size() + " " + check.cardinality());
+				    		if (check.cardinality() == sizes.get(fileEntry)) fileEntry.delete();
+				    		break;
+				    	}
 				    }
 				    // get the index file; if it does already exist, delete it
 					this.indexFile = new File(this.dir
@@ -854,26 +871,41 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			}
 		}
 		
-		private void removeStringFromFile(String toRemove, String file) {
+//		private void removeStringFromFile(String toRemove, String file) {
+//			try {
+//				File inFile = new File(file);
+////				File tempFile = File.createTempFile(inFile.getName(), ".tmp", inFile.getParentFile());
+//				File tempFile = new File(inFile.getAbsolutePath() + ".tmp");
+//				BufferedReader rd = new BufferedReader(new FileReader(inFile));
+//				PrintWriter wr = new PrintWriter(new FileWriter(tempFile));
+//				for (String line; (line = rd.readLine()) != null;) {
+//					if (!line.startsWith(toRemove)) {
+//						wr.write(line + "\n");
+//					}
+//				}
+//				rd.close();
+//				wr.close();
+//				inFile.delete();
+//				tempFile.renameTo(inFile);
+////				System.out.println("success: " + tempFile.renameTo(inFile) + " File " + inFile.getName());
+//			} catch (IOException e) {
+//				e.printStackTrace();
+//			}
+//		}
+		
+		private int getLineCount(File file) {
+			int lines = 0;
 			try {
-				File inFile = new File(file);
-//				File tempFile = File.createTempFile(inFile.getName(), ".tmp", inFile.getParentFile());
-				File tempFile = new File(inFile.getAbsolutePath() + ".tmp");
-				BufferedReader rd = new BufferedReader(new FileReader(inFile));
-				PrintWriter wr = new PrintWriter(new FileWriter(tempFile));
-				for (String line; (line = rd.readLine()) != null;) {
-					if (!line.startsWith(toRemove)) {
-						wr.write(line + "\n");
-					}
+				LineNumberReader rd = new LineNumberReader(new FileReader(file));
+				while (rd.readLine() != null) {
+					lines++;
 				}
 				rd.close();
-				wr.close();
-				inFile.delete();
-				tempFile.renameTo(inFile);
-//				System.out.println("success: " + tempFile.renameTo(inFile) + " File " + inFile.getName());
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
+			System.out.println(lines);
+			return lines;
 		}
 
 		private void writeStringifiedToFile(String content, String filename) throws IOException {

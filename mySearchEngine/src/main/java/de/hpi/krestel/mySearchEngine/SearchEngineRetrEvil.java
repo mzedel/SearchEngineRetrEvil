@@ -29,6 +29,7 @@ import java.util.Set;
 import java.util.StringTokenizer;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 
 import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
@@ -725,72 +726,36 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					}
 				};
 				File directory = new File(this.dir);
-				HashMap<File, BitSet> doneLines = new HashMap<File, BitSet>();
-				HashMap<File, Integer> sizes = new HashMap<File, Integer>();
+				ConcurrentHashMap<File, BitSet> doneLines = new ConcurrentHashMap<File, BitSet>();
+				ConcurrentHashMap<File, Integer> sizes = new ConcurrentHashMap<File, Integer>();
+				// prepare HashMaps with file information
+				for(File fileEntry : directory.listFiles(filter)) {
+					int lines = getLineCount(fileEntry);
+					doneLines.put(fileEntry, new BitSet(lines));
+					sizes.put(fileEntry, lines);
+				}
+				
 				while (directory.listFiles(filter).length > 0) {
 					File[] filesInFolder = directory.listFiles(filter);
 					String indexString = "";
 					String line = "foo";
 					Index.TermList list = new Index.TermList();
 					boolean isFirstFile = true;
-					
-				    for (File fileEntry : filesInFolder) {
-				    	boolean found = false;
-			    		if(doneLines.get(fileEntry) == null) {
-			    			int lines = getLineCount(fileEntry);
-		    				doneLines.put(fileEntry, new BitSet(lines));
-		    				sizes.put(fileEntry, lines);
-			    		}
-			    		BitSet check = doneLines.get(fileEntry);
-//				    	BufferedReader rd = new BufferedReader(new FileReader(fileEntry));
-				    	LineNumberReader rd = new LineNumberReader(new FileReader(fileEntry));
-				    	while ((line = rd.readLine()) != null) {
-				    		if (check.get(rd.getLineNumber())) continue;
-				    		
-				    		if (isFirstFile) {
-					            list.term = line.substring(0, line.indexOf(":"));
-					            isFirstFile = false;
-					    	}
-				    		
-				    		found = line.startsWith(list.term);
-				    		if (found) {
-				    			indexString = line.substring(line.indexOf(":") + 1);
-				    			Map <Long, Collection<Integer> > asd = Index.TermList.createFromIndexString(indexString).occurrences;
-				    			for(Long key : asd.keySet()) {
-				    			    if(list.occurrences.get(key) != null)
-				    			        list.occurrences.get(key).addAll(asd.get(key));
-				    			    else list.occurrences.put(key,asd.get(key));
-				    			}
-				    			check.set(rd.getLineNumber());
-				    			break;
-				    		}
-				    	}
-				    	rd.close();
-//			    		removeStringFromFile(list.term, fileEntry.getAbsolutePath());
-//				    	if (fileEntry.length() == 0) fileEntry.delete();
-				    	if (found) {
-//				    		System.out.println(check.size() + " " + check.cardinality());
-				    		if (check.cardinality() == sizes.get(fileEntry)) fileEntry.delete();
-				    		break;
-				    	}
-				    }
-				    // get the index file; if it does already exist, delete it
 					this.indexFile = new File(this.dir
 							+ IndexHandler.indexFileName
 							+ IndexHandler.fileExtension);
+					for (int threadCount = 0; threadCount < 10; threadCount++) {
+						Thread t = new Thread(new FileListProcessor(doneLines, sizes, filesInFolder,
+							list, isFirstFile, this.indexFile, this.seeklist, this.seekPosition));
+						t.start();
+					}
+				    // get the index file; if it does already exist, delete it
+					
 //					/* 
 //					 * get random access file for index with read / write, attempts 
 //					 * to make nonexistent file
 //					 */
-					this.raIndexFile = new RandomAccessFile(indexFile, "rw");
-					this.fos = new FileOutputStream(raIndexFile.getFD());
-					this.bo = new BufferedOutputStream(fos);
-					list.term = new String(Base64.getDecoder().decode(list.term));
-					raIndexFile.seek(this.seekPosition);
-					this.seeklist.put(list.term, this.seekPosition);
-//					System.out.println("Term: " + list.term + " Size: " + list.occurrences.size());
-					list.toIndexString(bo, list.term, false);
-					this.seekPosition = raIndexFile.getFilePointer();
+					
 				}
 				raIndexFile.close();
 				
@@ -818,6 +783,97 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				e.printStackTrace();
 			}
 		}
+
+		private class FileListProcessor implements Runnable {
+
+			ConcurrentHashMap<File, BitSet> doneLines;
+			ConcurrentHashMap<File, Integer> sizes;
+			File[] filesInFolder;
+			Index.TermList list;
+			boolean isFirstFile;
+			RandomAccessFile raIndexFile;
+			FileOutputStream fos;
+			BufferedOutputStream bo;
+			private long seekPosition;
+			private Map<String, Long> seeklist; 
+			
+			public FileListProcessor(ConcurrentHashMap<File, BitSet> doneLines,
+					ConcurrentHashMap<File, Integer> sizes, File[] filesInFolder,
+					Index.TermList list, boolean isFirstFile, File indexFile, 
+					Map<String, Long> seeklist, long seekPosition) {
+				this.doneLines = doneLines;
+				this.sizes = sizes;
+				this.filesInFolder = filesInFolder;
+				this.list = list;
+				this.isFirstFile = isFirstFile;
+				this.seeklist = seeklist;
+				this.seekPosition = seekPosition;
+
+				try {
+					this.raIndexFile = new RandomAccessFile(indexFile, "rw");
+					this.fos = new FileOutputStream(raIndexFile.getFD());
+				} catch (FileNotFoundException e) {
+					e.printStackTrace();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+				this.bo = new BufferedOutputStream(fos);
+			}
+			
+			@Override
+			public void run() {
+				try {
+				String indexString;
+				String line;
+				for (File fileEntry : filesInFolder) {
+					boolean found = false;
+					BitSet check = doneLines.get(fileEntry);
+					LineNumberReader rd = new LineNumberReader(new FileReader(fileEntry));
+					while ((line = rd.readLine()) != null) {
+						if (check.get(rd.getLineNumber())) continue;
+						synchronized (this) {
+							if (isFirstFile) {
+					            list.term = line.substring(0, line.indexOf(":"));
+					            isFirstFile = false;
+							}
+				    	}
+						found = line.startsWith(list.term);
+						if (found) {
+							indexString = line.substring(line.indexOf(":") + 1);
+							Map <Long, Collection<Integer> > asd = Index.TermList.createFromIndexString(indexString).occurrences;
+							for(Long key : asd.keySet()) {
+								synchronized (this) {
+								    if(list.occurrences.get(key) != null)
+								        list.occurrences.get(key).addAll(asd.get(key));
+								    else list.occurrences.put(key,asd.get(key));
+								}
+							}
+							check.set(rd.getLineNumber());
+							break;
+						}
+					}
+					rd.close();
+					if (found) {
+						if (check.cardinality() == sizes.get(fileEntry)) fileEntry.delete();
+						break;
+					}
+				}
+				list.term = new String(Base64.getDecoder().decode(list.term));
+				
+				synchronized (this) {
+					raIndexFile.seek(this.seekPosition);
+					this.seeklist.put(list.term, this.seekPosition);
+					list.toIndexString(bo, list.term, false);
+					this.seekPosition = raIndexFile.getFilePointer();
+				}
+				} catch(Exception e) {
+					
+				}
+			}
+			
+		}
+		
+		
 		
 		private void removeStringFromFile(String toRemove, String file) {
 			try {

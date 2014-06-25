@@ -1,7 +1,7 @@
 package de.hpi.krestel.mySearchEngine;
 
 import java.io.BufferedOutputStream;
-import java.io.BufferedReader;
+//import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.EOFException;
 import java.io.File;
@@ -12,7 +12,7 @@ import java.io.FileWriter;
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.LineNumberReader;
-import java.io.PrintWriter;
+//import java.io.PrintWriter;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -21,6 +21,7 @@ import java.util.BitSet;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -31,6 +32,7 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 
+import javax.xml.bind.DatatypeConverter;
 import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 
@@ -52,22 +54,26 @@ import org.xml.sax.helpers.DefaultHandler;
  *  - stopword removal?
  *  - index algorithm?
  *  - etc.
+ *  
+ *  - We use Lucene for pre-processing documents and queries (lower case,
+ *    tokenizing, stemming, stopword removal using a newer german list)
+ *  - Redirection pages are not indexed to begin with. Therefore, they are not
+ *    considered in the ranking (of other documents) either.
  */
-
 public class SearchEngineRetrEvil extends SearchEngine {
 	
 	/**
 	 * Boolean operator "AND" in upper case
 	 */
-	private static final String AND = "AND";
+	private static final String AND = " AND ";
 	/**
 	 * Boolean operator "OR" in upper case
 	 */
-	private static final String OR = "OR";
+	private static final String OR = " OR ";
 	/**
 	 * Boolean operator "BUT NOT" in upper case
 	 */
-	private static final String BUT_NOT = "BUT NOT";
+	private static final String BUT_NOT = " BUT NOT ";
 	/**
 	 * List of all boolean operators (for convenience)
 	 */
@@ -107,7 +113,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * If set to <tt>false</tt>, for each document, the title followed by the
 	 * snippet will be returned.
 	 */
-	private static final boolean PRINT_SNIPPETS = false;
+	private static final boolean PRINT_SNIPPETS = true;
 	
 	/**
 	 * Index handler for queries etc.
@@ -125,8 +131,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * Index uses {@link TreeMap}, whose keys are ordered, to provide the
 	 * ordering of terms.
 	 * This is a utility class. It does not check for null values.
-	 * 
-	 * TODO: implement merging of Index / TermList parts
 	 */
 	private static class Index {
 		
@@ -282,7 +286,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				for (Long documentId : this.occurrences.keySet()) {	// uses iterator
 					if (isFirstOccurence && isIndexing) {
 						// encode term as base64 to avoid .,-: etc...
-						bo.write(Base64.getEncoder().encode(term.getBytes()));
+						bo.write(DatatypeConverter.printBase64Binary(term.getBytes()).getBytes());
 						bo.write(Index.TermList.colon);
 					}
 					if (!isFirstOccurence) bo.write(Index.TermList.semi);
@@ -387,8 +391,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * Merges everything into the final index file once the SAXHandler has
 	 * finished parsing.
 	 * (in the future:) Provides information for the query engine.
-	 * 
-	 * TODO: implement writing / merging of Index parts to avoid memory problems
 	 */
 	private static class IndexHandler {
 		
@@ -484,6 +486,38 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					"zum", "zunächst", "zur", "zurück", "zusammen", "zwanzig", "zwar", 
 					"zwei", "zweite", "zweiten", "zweiter", "zweites", "zwischen", "zwölf" }));
 		
+		/*
+		 * Insertion-ordered map of regular expressions which are used to remove
+		 * the syntax from documents in order to create nice snippets.
+		 * Lists (* ..., # ...) are not removed.
+		 */
+		private static final Map<String, String> patterns = new LinkedHashMap<String, String>();
+		static {
+			patterns.put("'''", "");						// bold
+			patterns.put("''", "");							// italic
+			patterns.put("==+", "");						// headings
+			patterns.put("\\[\\[Datei:[^\\]]*\\]\\]", "");	// files (delete content)
+			patterns.put("\\[\\[[^|\\]]+\\|", "");			// internal links
+			patterns.put("\\[\\[", "");
+			patterns.put("\\]\\]", "");
+			patterns.put("\\[\\w+://[^\\s]+\\s", "");		// external links
+			patterns.put("\\[", "");
+			patterns.put("\\]", "");
+			patterns.put("\\{\\{[^}]*\\}\\}", "");		// special internal links (delete content)
+			patterns.put("\\{\\{", "");
+			patterns.put("\\}\\}", "");
+			patterns.put("\\{[^}]*\\}", "");				// templates (delete content)
+			patterns.put("\\|(.*)\n", "");
+			patterns.put("<gallery>[^<]*</gallery>", "");	// galleries (delete content)
+			patterns.put("<ref>[^<]*</ref>", "");			// references (delete content)
+			patterns.put("#WEITERLEITUNG", "");				// redirection (should not happen anyway)
+			patterns.put("<[^>]*>", "");					// arbitrary tags
+			patterns.put("\n(.*):\\\\mathrm(.*)\n", "\n");	// formulas
+			patterns.put("  ", "");							// double spaces
+			patterns.put("\n ", "\n");						// newline followed by space
+			patterns.put("\n\n\n", "\n\n");					// triple newlines
+		}
+		
 		private static final int THRESHOLD = 160 * 1024 * 1024;
 		private int byteCounter = 0;
 		
@@ -491,7 +525,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		private String dir;
 		// simple counter to flush index files to avoid exceedingly high memory consumption
 
-		private int pageCount = 0;
 		private int fileCount = 0;
 		private long seekPosition = 0;
 		
@@ -603,7 +636,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			 * CharTermAttribute refers to the string values of terms in the text
 			 * which is the only thing that is of interest for us.
 			 */
-//			System.out.println("---- Text ---- : "+ text);
 			TokenStream stream = this.analyzer.tokenStream("fieldName", text);
 			CharTermAttribute termAtt = stream.addAttribute(CharTermAttribute.class);
 			GermanStemFilter stemFilter = new GermanStemFilter(stream);
@@ -634,8 +666,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 * @param text the text of the document
 		 */
 		public void indexPage(Long id, String title, String text) {
-			// note id - title - mapping
+			// id - title - mapping
 			this.titles.put(id, title);
+			
+			// indexing
 			try {
 				// process text (tokenizing, stopping, stemming)
 				List<String> terms = this.processRawText(text);
@@ -649,12 +683,12 @@ public class SearchEngineRetrEvil extends SearchEngine {
 						this.byteCounter = 0;
 					}
 				}
-//				this.pageCount++;
 			} catch (IOException e) {
 				// an IOException was thrown by the Analyzer
 				e.printStackTrace();
 			}
-			// handle texts file and seeklist
+			
+			// texts file and its seeklist
 			try {
 				RandomAccessFile raTextsFile = new RandomAccessFile(new File(this.dir 
 						+ IndexHandler.textsFileName 
@@ -666,19 +700,39 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				// store offset (before the text) in the seeklist of the texts file
 				this.textsSeeklist.put(id, raTextsFile.getFilePointer());
 				
-				// remove tabs from the text and add one as separator
-				String processedText = (text != null ? text : "")
-						.replace('\t', ' ')
-						.concat("\t");
-				
-				// write text of the document to the file
-				raTextsFile.writeBytes(processedText);
+				// write clean text of the document to the file (2 bytes per char)
+				raTextsFile.writeChars(cleanPageText(text));;
 				
 				// close the file
 				raTextsFile.close();
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
+		}
+		
+		/**
+		 * Prepare the given text of a document for snippet creation, i.e., 
+		 * remove all markup. Also, prepare it for being written to the texts
+		 * file, i.e., replace tabs in the text and append a tab to it as 
+		 * delimiter.
+		 * @param text the text of a document
+		 * @return text prepared for the texts file
+		 */
+		private String cleanPageText(String text) {
+			// remove tabs from the text and add one as separator
+			String processedText = (text != null ? text : "")
+					.replace('\t', ' ')
+					.concat("\t");
+			
+
+			
+			// remove matches
+			for (String pattern : patterns.keySet()) {
+				processedText = processedText.replaceAll(pattern, patterns.get(pattern));
+			}
+			
+			// return with removed leading / trailing whitespace
+			return processedText.trim();
 		}
 		
 		private void writeToIndexFile() {
@@ -709,7 +763,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		
 		/**
 		 * Merges all parts of the index.
-		 * TODO: implement merging
 		 * Creates the seeklist.
 		 * Writes the index, the seeklist and the id-titles-mapping to 
 		 * files (one file each).
@@ -737,8 +790,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				
 				while (directory.listFiles(filter).length > 0) {
 					File[] filesInFolder = directory.listFiles(filter);
-					String indexString = "";
-					String line = "foo";
 					Index.TermList list = new Index.TermList();
 					boolean isFirstFile = true;
 					this.indexFile = new File(this.dir
@@ -749,13 +800,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 							list, isFirstFile, this.indexFile, this.seeklist, this.seekPosition));
 						t.start();
 					}
-				    // get the index file; if it does already exist, delete it
-					
-//					/* 
-//					 * get random access file for index with read / write, attempts 
-//					 * to make nonexistent file
-//					 */
-					
 				}
 				raIndexFile.close();
 				
@@ -875,27 +919,27 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		
 		
 		
-		private void removeStringFromFile(String toRemove, String file) {
-			try {
-				File inFile = new File(file);
-//				File tempFile = File.createTempFile(inFile.getName(), ".tmp", inFile.getParentFile());
-				File tempFile = new File(inFile.getAbsolutePath() + ".tmp");
-				BufferedReader rd = new BufferedReader(new FileReader(inFile));
-				PrintWriter wr = new PrintWriter(new FileWriter(tempFile));
-				for (String line; (line = rd.readLine()) != null;) {
-					if (!line.startsWith(toRemove)) {
-						wr.write(line + "\n");
-					}
-				}
-				rd.close();
-				wr.close();
-				inFile.delete();
-				tempFile.renameTo(inFile);
-//				System.out.println("success: " + tempFile.renameTo(inFile) + " File " + inFile.getName());
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
-		}
+//		private void removeStringFromFile(String toRemove, String file) {
+//			try {
+//				File inFile = new File(file);
+////				File tempFile = File.createTempFile(inFile.getName(), ".tmp", inFile.getParentFile());
+//				File tempFile = new File(inFile.getAbsolutePath() + ".tmp");
+//				BufferedReader rd = new BufferedReader(new FileReader(inFile));
+//				PrintWriter wr = new PrintWriter(new FileWriter(tempFile));
+//				for (String line; (line = rd.readLine()) != null;) {
+//					if (!line.startsWith(toRemove)) {
+//						wr.write(line + "\n");
+//					}
+//				}
+//				rd.close();
+//				wr.close();
+//				inFile.delete();
+//				tempFile.renameTo(inFile);
+////				System.out.println("success: " + tempFile.renameTo(inFile) + " File " + inFile.getName());
+//			} catch (IOException e) {
+//				e.printStackTrace();
+//			}
+//		}
 		
 		private int getLineCount(File file) {
 			int lines = 0;
@@ -1115,7 +1159,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			boolean isId = true;	// whether the current token is the id
 			Long id = null;
 			String title = null;
-			System.out.println(string);
 			while (tok.hasNext()) {
 				String token = tok.next();
 				try {
@@ -1405,13 +1448,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					log("");
 				}
 			}
-//			if (this.indexer.pageCount == 3001)
-//				try {
-//					endDocument();
-//				} catch (SAXException e) {
-//					// TODO Auto-generated catch block
-//					e.printStackTrace();
-//				}
 		}
 
 		@Override
@@ -1509,9 +1545,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			dir = dir.concat("/");
 		}
 		
-		// get dump file TODO: make that more general
-		String dumpFile = new File(dir).getParent() + "/" + "deWikipediaDump.xml";
-//		String dumpFile = new File(dir).getParent() + "/" + "testDump.xml";
+		// get dump file
+//		String dumpFile = new File(dir).getParent() + "/" + "deWikipediaDump.xml";
+		String dumpFile = new File(dir).getParent() + "/" + "testDump.xml";
 
 		/* 
 		 * create the indexer with the target dir; this instance is only used for

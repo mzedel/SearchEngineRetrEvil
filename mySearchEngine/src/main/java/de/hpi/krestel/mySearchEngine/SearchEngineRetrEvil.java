@@ -1,6 +1,7 @@
 package de.hpi.krestel.mySearchEngine;
 
 import java.io.BufferedOutputStream;
+import java.io.BufferedReader;
 //import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.EOFException;
@@ -17,6 +18,7 @@ import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Base64.Decoder;
 import java.util.BitSet;
 import java.util.Collection;
 import java.util.HashMap;
@@ -406,6 +408,8 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		private static final String titlesFileName = "titles";
 		// file extension
 		private static final String fileExtension = ".txt";
+		// file extension
+		private static final String tempFileExtension = ".tmp";
 		// extended stopword list 
 		private static final HashSet<String> GERMAN_STOP_WORDS = new HashSet<String>(
 			Arrays.asList(new String[] { "a", "ab", "aber", "ach", "acht", "achte",
@@ -486,6 +490,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					"zum", "zunächst", "zur", "zurück", "zusammen", "zwanzig", "zwar", 
 					"zwei", "zweite", "zweiten", "zweiter", "zweites", "zwischen", "zwölf" }));
 		
+		// just to provide a simple way to switch between full index creation and just merging
+		public static final boolean DEV_MODE = false;
+
 		/*
 		 * Insertion-ordered map of regular expressions which are used to remove
 		 * the syntax from documents in order to create nice snippets.
@@ -518,7 +525,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			patterns.put("\n\n\n", "\n\n");					// triple newlines
 		}
 		
-		private static final int THRESHOLD = 160 * 1024 * 1024;
+		private static int THRESHOLD = 160 * 1024 * 1024;
 		private int byteCounter = 0;
 		
 		// directory of files to be read / written
@@ -555,6 +562,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		public IndexHandler(String dir) {
 			// delegate to more general constructor
 			this(dir, false);
+			
+			if (IndexHandler.DEV_MODE)
+				IndexHandler.THRESHOLD = 160 * 32;
 		}
 		
 		/**
@@ -740,11 +750,11 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					+ IndexHandler.indexFileName
 					+ "_"
 					+ this.fileCount
-					+ IndexHandler.fileExtension);
+					+ IndexHandler.tempFileExtension);
 			try {
-				this.raIndexFile = new RandomAccessFile(indexFile, "rw");
-				this.fos = new FileOutputStream(raIndexFile.getFD());
-				this.bo = new BufferedOutputStream(fos);
+//				this.raIndexFile = new RandomAccessFile(indexFile, "rw");
+				this.fos = new FileOutputStream(this.indexFile);
+				this.bo = new BufferedOutputStream(fos, 8192 );
 				// get map of terms and their occurrence lists
 				Map<String, Index.TermList> termLists = this.index.getTermLists();
 				// write each occurrence list to the file
@@ -775,38 +785,181 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				FilenameFilter filter = new FilenameFilter() {
 					@Override
 					public boolean accept(File dir, String name) {
-						return name.startsWith(IndexHandler.indexFileName + "_");// && !name.endsWith(".tmp");
+						return name.endsWith(IndexHandler.tempFileExtension);
 					}
 				};
 				File directory = new File(this.dir);
-				ConcurrentHashMap<File, BitSet> doneLines = new ConcurrentHashMap<File, BitSet>();
-				ConcurrentHashMap<File, Integer> sizes = new ConcurrentHashMap<File, Integer>();
-				// prepare HashMaps with file information
-				for(File fileEntry : directory.listFiles(filter)) {
-					int lines = getLineCount(fileEntry);
-					doneLines.put(fileEntry, new BitSet(lines));
-					sizes.put(fileEntry, lines);
+//				HashMap<File, BitSet> doneLines = new HashMap<File, BitSet>();
+//				HashMap<File, Integer> sizes = new HashMap<File, Integer>();
+//				// prepare HashMaps with file information
+//				for(File fileEntry : directory.listFiles(filter)) {
+//					int lines = getLineCount(fileEntry);
+//					doneLines.put(fileEntry, new BitSet(lines));
+//					sizes.put(fileEntry, lines);
+//				}
+				this.indexFile = new File(this.dir
+						+ IndexHandler.indexFileName
+						+ IndexHandler.fileExtension);
+				this.raIndexFile = new RandomAccessFile(this.indexFile, "rw");
+				this.fos = new FileOutputStream(raIndexFile.getFD());
+				this.bo = new BufferedOutputStream(fos, 8192);
+				File[] filesInFolder = directory.listFiles(filter);
+				BufferedReader[] fileBeginnings = new BufferedReader[filesInFolder.length];
+
+				Decoder b64 = Base64.getDecoder();
+				int index = 0;
+				int fileCount = filesInFolder.length;
+				String line = "";
+				String[] terms = new String[fileCount];
+				String[] lines = new String[fileCount];
+				for(File fileEntry : filesInFolder) {
+					FileReader reader = new FileReader(fileEntry);
+					BufferedReader breed = new BufferedReader(reader);
+					fileBeginnings[index] = breed;
+					line = breed.readLine();
+					terms[index] = new String(b64.decode(line.substring(0, line.indexOf(":"))));
+					lines[index] = line.substring(line.indexOf(":"));
+//					System.out.println("Line: " + lines[index] + " for Term: " + terms[index]);
+					index++;
+				}
+				String term = getLowest(terms);
+				String nextTerm = term;
+				index = 0;
+				int countDown = fileCount;
+				int winnerSlot = -1;
+				line = "";
+//				System.out.println("lowest Term: " + term);
+				while(countDown > 0) {
+					for(index = 0; index < fileCount; index++) {
+						if (lines[index] == null) continue;
+						String currentTerm = terms[index];
+						if (term.compareTo(currentTerm) == 0) {
+							winnerSlot = index;
+							if (line.length() > 0) line += ";";
+							String toAppend = lines[index].substring(1, lines[index].lastIndexOf("."));
+//								System.out.println("toAppend: " + toAppend);
+								line += toAppend; 
+								String currentLine = fileBeginnings[index].readLine(); 
+								if (currentLine == null) {
+									fileBeginnings[index].close();
+									fileBeginnings[index] = null;
+									terms[index] = null;
+									lines[index] = null;
+									countDown--;
+									term = getLowest(lines);
+									term = term.substring(0, term.indexOf(":"));
+								} else {
+									terms[index] = new String(b64.decode(currentLine.substring(0, currentLine.indexOf(":"))));
+									lines[index] = currentLine.substring(currentLine.indexOf(":"));
+									
+								}
+						} else if (term.compareTo(currentTerm) < 0 && nextTerm.compareTo(currentTerm) < 0) {
+								nextTerm = currentTerm;
+						} else {
+							continue;
+						}
+						
+					}
+					this.seeklist.put(term, this.raIndexFile.getFilePointer());
+					this.bo.write(line.getBytes());
+					this.bo.write(".".getBytes());
+//					System.out.println("Term with line: " + term + "--:--" + line);
+					line = "";
+					if (term.equals(nextTerm)) {
+						if (fileBeginnings[winnerSlot] == null) {
+							nextTerm = getLowest(terms);
+						} else {
+							String currentLine = fileBeginnings[winnerSlot].readLine(); 
+							if (currentLine == null) {
+								fileBeginnings[winnerSlot].close();
+								fileBeginnings[winnerSlot] = null;
+								lines[winnerSlot] = null;
+								terms[winnerSlot] = null;
+								countDown--;
+								nextTerm = getLowest(terms);
+							} else {
+								terms[winnerSlot] = new String(b64.decode(currentLine.substring(0, currentLine.indexOf(":"))));
+								lines[winnerSlot] = currentLine.substring(currentLine.indexOf(":"));
+								nextTerm = terms[winnerSlot];
+							}
+						}
+						winnerSlot = -1;
+					}
+					term = nextTerm;
 				}
 				
-				while (directory.listFiles(filter).length > 0) {
-					File[] filesInFolder = directory.listFiles(filter);
-					Index.TermList list = new Index.TermList();
-					boolean isFirstFile = true;
-					this.indexFile = new File(this.dir
-							+ IndexHandler.indexFileName
-							+ IndexHandler.fileExtension);
-					for (int threadCount = 0; threadCount < 10; threadCount++) {
-						Thread t = new Thread(new FileListProcessor(doneLines, sizes, filesInFolder,
-							list, isFirstFile, this.indexFile, this.seeklist, this.seekPosition));
-						t.start();
-					}
-				}
-				raIndexFile.close();
+				
+//				while (directory.listFiles(filter).length > 0) {
+//					
+//					Index.TermList list = new Index.TermList();
+//					boolean isFirstFile = true;
+//					
+////					for (int threadCount = 0; threadCount < 10; threadCount++) {
+////						Thread t = new Thread(new FileListProcessor(doneLines, sizes, filesInFolder,
+////							list, isFirstFile, this.indexFile, this.seeklist, this.seekPosition));
+////						t.start();
+////					}
+//					try {
+////						String indexString;
+//						StringBuilder indexStringBuilder = new StringBuilder();
+//						String line;
+//						Character firstChar = null;
+//						for (File fileEntry : filesInFolder) {
+//							boolean found = false;
+//							BitSet check = doneLines.get(fileEntry);
+//							LineNumberReader rd = new LineNumberReader(new FileReader(fileEntry)); 
+//							while ((line = rd.readLine()) != null) {
+//								if (check.get(rd.getLineNumber())) continue;
+//								
+//								if (isFirstFile) {
+//						            list.term = new String(b64.decode(line.substring(0, line.indexOf(":"))));
+//						            firstChar = list.term.charAt(0);
+//						            isFirstFile = false;
+//								}
+//						    	String bla = new String(b64.decode(line.substring(0, line.indexOf(":"))));
+//								if (firstChar.compareTo(bla.charAt(0)) < 0) break;
+//								found = bla.startsWith(list.term);
+//								if (found) {
+////									indexString = line.substring(line.indexOf(":") + 1);
+//									indexStringBuilder.append(line.substring(line.indexOf(":") + 1));
+////									Map <Long, Collection<Integer> > asd = Index.TermList.createFromIndexString(indexString).occurrences;
+////									for(Long key : asd.keySet()) {
+////									    if(list.occurrences.get(key) != null)
+////									        list.occurrences.get(key).addAll(asd.get(key));
+////									    else list.occurrences.put(key,asd.get(key));
+////									}
+//									check.set(rd.getLineNumber());
+//									break;
+//								}
+//							}
+//							rd.close();
+//							if (found) {
+//								if (check.cardinality() == sizes.get(fileEntry)) fileEntry.delete();
+//								continue;
+//							}
+//						}
+////						list.term = new String(Base64.getDecoder().decode(list.term));
+//						System.out.println("merging term: " + list.term);
+//						raIndexFile.seek(this.seekPosition);
+//						this.seeklist.put(list.term, this.seekPosition);
+//						bo.write(indexStringBuilder.toString().getBytes());
+////						list.toIndexString(bo, list.term, false);
+//						bo.flush();
+//						this.seekPosition = raIndexFile.getFilePointer();
+//						} catch(Exception e) {
+//							
+//						}
+//					
+//				}
+				this.bo.close();	
+				this.fos.close();
+				this.raIndexFile.close();
 				
 				/*
 				 * write the seeklist to a file
 				 */
-				writeStringifiedToFile(this.seekListToString(), this.dir 
+//				writeStringifiedToFile(
+				this.seekListToFile(this.dir 
 						+ IndexHandler.seekListFileName 
 						+ IndexHandler.fileExtension);
 				
@@ -826,6 +979,22 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
+		}
+
+		// find the lexicographically lowest in a collection of Strings
+		private String getLowest(String[] lines) {
+			String lowest = "";
+			for (String line : lines) {
+				if(line != null) {
+					lowest = line;
+					break;
+				}
+			}
+			for(String line : lines) {
+				if(line != null && lowest.compareTo(line) > 0)
+					lowest = line;
+			}
+			return lowest;
 		}
 
 		private class FileListProcessor implements Runnable {
@@ -869,6 +1038,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				try {
 				String indexString;
 				String line;
+				Character firstChar = null;
 				for (File fileEntry : filesInFolder) {
 					boolean found = false;
 					BitSet check = doneLines.get(fileEntry);
@@ -878,9 +1048,11 @@ public class SearchEngineRetrEvil extends SearchEngine {
 						synchronized (this) {
 							if (isFirstFile) {
 					            list.term = line.substring(0, line.indexOf(":"));
+					            firstChar = list.term.charAt(0);
 					            isFirstFile = false;
 							}
 				    	}
+						if (firstChar.compareTo(line.charAt(0)) < 0) break;
 						found = line.startsWith(list.term);
 						if (found) {
 							indexString = line.substring(line.indexOf(":") + 1);
@@ -958,7 +1130,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 
 		private void writeStringifiedToFile(String content, String filename) throws IOException {
 			FileWriter fos = new FileWriter(filename);
-			BufferedWriter bo = new BufferedWriter(fos);
+			BufferedWriter bo = new BufferedWriter(fos, 8192);
 			bo.write(content);
 			bo.close();
 			fos.close();
@@ -988,20 +1160,23 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 * (\t are actual tab characters)
 		 * @return a string representation of the seek list
 		 */
-		private String seekListToString() {
-			StringBuilder result = new StringBuilder();
-			
-			for (String term : this.seeklist.keySet()) {	// uses iterator
-				result
-					.append(term)
-					.append('\t')
-					.append(this.seeklist.get(term))
-					.append('\t');
+		private String seekListToFile(String filename) {
+			try {
+			FileWriter fos = new FileWriter(filename);
+			BufferedWriter bo = new BufferedWriter(fos, 8192);
+				for (String term : this.seeklist.keySet()) {	// uses iterator
+					bo.write(term);
+					bo.write('\t');
+					bo.write(this.seeklist.get(term) + "");
+					bo.write('\t');
+				}
+				bo.close();
+				fos.close();
+			} catch (IOException e) {
+				e.printStackTrace();
 			}
-			// remove the last '\t'
-			result.deleteCharAt(result.lastIndexOf("\t"));
-			
-			return result.toString();
+			return "";
+//			return result.toString();
 		}
 		
 		/**
@@ -1546,8 +1721,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		// get dump file
-//		String dumpFile = new File(dir).getParent() + "/" + "deWikipediaDump.xml";
-		String dumpFile = new File(dir).getParent() + "/" + "testDump.xml";
+		String dumpFile = new File(dir).getParent() + "/" + "deWikipediaDump.xml";
+		if (IndexHandler.DEV_MODE)
+			dumpFile = new File(dir).getParent() + "/" + "testDump.xml";
 
 		/* 
 		 * create the indexer with the target dir; this instance is only used for
@@ -1555,6 +1731,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 */
 		IndexHandler indexer = new IndexHandler(dir);
 		
+		File fileDirectory = new File(dir);
+		if (fileDirectory.listFiles().length > 10) 
+			indexer.createIndex();
 		try {
 			// get the SAX parser with the appropriate handler
 			SAXParser saxParser = SAXParserFactory.newInstance().newSAXParser();

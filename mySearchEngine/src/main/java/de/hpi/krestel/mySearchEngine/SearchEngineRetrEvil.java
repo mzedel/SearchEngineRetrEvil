@@ -2,7 +2,6 @@ package de.hpi.krestel.mySearchEngine;
 
 import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
-//import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.EOFException;
 import java.io.File;
@@ -12,14 +11,9 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.FilenameFilter;
 import java.io.IOException;
-import java.io.LineNumberReader;
-//import java.io.PrintWriter;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Base64;
-import java.util.Base64.Decoder;
-import java.util.BitSet;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -32,7 +26,8 @@ import java.util.Set;
 import java.util.StringTokenizer;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.xml.bind.DatatypeConverter;
 import javax.xml.parsers.SAXParser;
@@ -147,6 +142,13 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 * {@link TreeSet}, whose elements are ordered according to their 
 		 * natural ordering.
 		 * This is a utility class. It does not check for null values.
+		 * 
+		 * Alternatively, TermList can be used to store lists of links to a
+		 * particular page. In that case, the "term" must be the processed
+		 * document title (it has to be ensured that it will not interfere with
+		 * actual terms) of the document, and the position lists will only be
+		 * used to store the document IDs (i.e., no position or a dummy position
+		 * will be stored for each document which links to the document).
 		 */
 		public static class TermList {
 			
@@ -387,6 +389,135 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		
 	}
 	
+	private static class LinkIndex {
+
+		public static class TitleList {
+			
+			private static final byte[] colon = ":".getBytes();
+			private static final byte[] comma = ",".getBytes();
+			private static final byte[] dot = ".".getBytes();
+			
+			private String title;
+			private Collection<String> titles;
+			
+			public TitleList(String title) {
+				this.title = title;
+				this.titles = new TreeSet<String>();
+			} 
+			
+			public static TitleList createFromIndexString(String string) {
+				TitleList list = new TitleList(null);
+				
+				// format: title:othertitle,othertitle,othertitle[.]
+				StringTokenizer tok = new StringTokenizer(string, ":,.");
+				boolean firstToken = true;
+				while (tok.hasMoreTokens()) {
+					String token = tok.nextToken();
+					if (firstToken) {
+						list.title = token;
+						firstToken = false;
+					} else {
+						list.addTitle(token);
+					}
+				}
+				return list;
+			}
+			
+			public void addTitle(String linkingTitle) {
+				if (!titles.contains(linkingTitle)) {
+					titles.add(linkingTitle);
+				}
+			}
+			
+			public String toString() {
+				StringBuilder result = new StringBuilder();
+				
+				result.append(this.title + ": ");
+				result.append("( ");
+				for (String title : this.titles) {
+					result.append("\"" + title + "\" ");
+				}
+				result.append(")");
+				
+				return result.toString();
+			}
+
+			// format: title:othertitle,othertitle,othertitle.\n
+			public void toIndexString(BufferedOutputStream bo) throws IOException {
+				// write title
+				bo.write(title.getBytes());
+				bo.write(colon);
+				
+				// write other titles
+				boolean isFirstTitle = true;
+				for (String title : titles) {
+					if (!isFirstTitle) {
+						bo.write(comma);
+					} else {
+						isFirstTitle = false;
+					}
+					bo.write(title.getBytes());
+				}
+				
+				// finish
+				bo.write(dot);
+				bo.write("\n".getBytes());
+				bo.flush();
+			}
+			
+			public Collection<String> getTitles() {
+				return this.titles;
+			}
+			
+		}
+		
+		private Map<String, TitleList> titleLists;
+		
+
+		public LinkIndex() {
+			this.titleLists = new TreeMap<String, TitleList>();
+		}
+		
+		public void addLinkingTitle(String title, String linkingTitle) {
+			TitleList list = this.getListForTitle(processTitle(title));
+			list.addTitle(processTitle(linkingTitle));
+		}
+		
+		private String processTitle(String title) {
+			return title.toLowerCase().replaceAll("[ .:,;-]", "");
+		}
+		
+		private TitleList getListForTitle(String processedTitle) {
+			TitleList list = this.titleLists.get(processedTitle);
+			if (list == null) {
+				list = new TitleList(processedTitle);
+				this.titleLists.put(processedTitle, list);
+			}
+			return list;
+		}
+		
+		public String toString() {
+			StringBuilder result = new StringBuilder();
+			
+			result.append("{\n");
+			for (String term : this.titleLists.keySet()) {
+				result.append(term + ": ");
+				TitleList list = this.titleLists.get(term);
+				if (list != null) {
+					result.append(list + "\n");
+				}
+			}
+			result.append("}");
+			
+			return result.toString();
+		}
+		
+		public Map<String, TitleList> getTitleLists() {
+			return this.titleLists;
+		}
+		
+	}
+	
 	/**
 	 * Handles everything related to the index. Deals with related I/O.
 	 * Gets id, title and text per article from the SAXHandler.
@@ -400,16 +531,21 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		private static final String indexFileName = "index";
 		// name of the file which stores the seeklist
 		private static final String seekListFileName = "index_seeklist";
+		// name of the file which stores the link index
+		private static final String linkIndexFileName = "link_index";
 		// name of the file which stores the texts (for snippets)
 		private static final String textsFileName = "texts";
 		// name of the file which stores the seeklist for the texts
 		private static final String textsSeekListFileName = "texts_seeklist";
 		// name of the file which stores the mapping of document ids and titles
-		private static final String titlesFileName = "titles";
+		private static final String titlesFileName = "idsToTitles";
+		// name of the file which stores the mapping of (processed) titles to ids
+		private static final String titlesToIdsFileName = "titlesToIds";
 		// file extension
 		private static final String fileExtension = ".txt";
 		// file extension
 		private static final String tempFileExtension = ".tmp";
+
 		// extended stopword list 
 		private static final HashSet<String> GERMAN_STOP_WORDS = new HashSet<String>(
 			Arrays.asList(new String[] { "a", "ab", "aber", "ach", "acht", "achte",
@@ -498,31 +634,47 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 * the syntax from documents in order to create nice snippets.
 		 * Lists (* ..., # ...) are not removed.
 		 */
-		private static final Map<String, String> patterns = new LinkedHashMap<String, String>();
+		private static final Map<String, String> cleaningPatterns = new LinkedHashMap<String, String>();
 		static {
-			patterns.put("'''", "");						// bold
-			patterns.put("''", "");							// italic
-			patterns.put("==+", "");						// headings
-			patterns.put("\\[\\[Datei:[^\\]]*\\]\\]", "");	// files (delete content)
-			patterns.put("\\[\\[[^|\\]]+\\|", "");			// internal links
-			patterns.put("\\[\\[", "");
-			patterns.put("\\]\\]", "");
-			patterns.put("\\[\\w+://[^\\s]+\\s", "");		// external links
-			patterns.put("\\[", "");
-			patterns.put("\\]", "");
-			patterns.put("\\{\\{[^}]*\\}\\}", "");		// special internal links (delete content)
-			patterns.put("\\{\\{", "");
-			patterns.put("\\}\\}", "");
-			patterns.put("\\{[^}]*\\}", "");				// templates (delete content)
-			patterns.put("\\|(.*)\n", "");
-			patterns.put("<gallery>[^<]*</gallery>", "");	// galleries (delete content)
-			patterns.put("<ref>[^<]*</ref>", "");			// references (delete content)
-			patterns.put("#WEITERLEITUNG", "");				// redirection (should not happen anyway)
-			patterns.put("<[^>]*>", "");					// arbitrary tags
-			patterns.put("\n(.*):\\\\mathrm(.*)\n", "\n");	// formulas
-			patterns.put("  ", "");							// double spaces
-			patterns.put("\n ", "\n");						// newline followed by space
-			patterns.put("\n\n\n", "\n\n");					// triple newlines
+			cleaningPatterns.put("'''", "");						// bold
+			cleaningPatterns.put("''", "");							// italic
+			cleaningPatterns.put("==+", "");						// headings
+			cleaningPatterns.put("\\[\\[Datei:[^\\]]*\\]\\]", "");	// files (delete content)
+			cleaningPatterns.put("\\[\\[[^|\\]]+\\|", "");			// internal links
+			cleaningPatterns.put("\\[\\[", "");
+			cleaningPatterns.put("\\]\\]", "");
+			cleaningPatterns.put("\\[\\w+://[^\\s]+\\s", "");		// external links
+			cleaningPatterns.put("\\[", "");
+			cleaningPatterns.put("\\]", "");
+			cleaningPatterns.put("\\{\\{[^}]*\\}\\}", "");			// special internal links (delete content)
+			cleaningPatterns.put("\\{\\{", "");
+			cleaningPatterns.put("\\}\\}", "");
+			cleaningPatterns.put("\\{[^}]*\\}", "");				// templates (delete content)
+			cleaningPatterns.put("\\|(.*)\n", "");
+			cleaningPatterns.put("<gallery>[^<]*</gallery>", "");	// galleries (delete content)
+			cleaningPatterns.put("<ref>[^<]*</ref>", "");			// references (delete content)
+			cleaningPatterns.put("#WEITERLEITUNG", "");				// redirection (should not happen anyway)
+			cleaningPatterns.put("<[^>]*>", "");					// arbitrary tags
+			cleaningPatterns.put("\n(.*):\\\\mathrm(.*)\n", "\n");	// formulas
+			cleaningPatterns.put("  ", "");							// double spaces
+			cleaningPatterns.put("\n ", "\n");						// newline followed by space
+			cleaningPatterns.put("\n\n\n", "\n\n");					// triple newlines
+		}
+		
+		/*
+		 * List of regular expressions which are used to extract internal links
+		 * from pages. Patterns are immutable, Matchers are not. Do not include
+		 * links to categories. Remove hash parts (e.g. ...#Section).
+		 */
+		private static final List<Pattern> linkingPatterns = new ArrayList<Pattern>();
+		static {
+			// simple internal links, e.g. [[Actinium]]
+			linkingPatterns.add(Pattern.compile("\\[\\[([^:#|\\]]+)(#[^|\\]]*)?\\]\\]"));
+			// internal links with text, e.g. [[Actinium|ein dummes Element]]
+			linkingPatterns.add(Pattern.compile("\\[\\[([^:#|\\]]+)(#[^|\\]]*)?\\|[^\\]]*\\]\\]"));
+			// external links which should be internal, e.g. 
+			// [http://de.wikipedia.org/wiki/Actinium Lol voll die "externe" Seite trololol]
+			linkingPatterns.add(Pattern.compile("\\[http://de\\.wikipedia\\.org/wiki/([^ :#\\]]+)[^\\]]*\\]"));
 		}
 		
 		private static int THRESHOLD = 160 * 1024 * 1024;
@@ -530,8 +682,8 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		
 		// directory of files to be read / written
 		private String dir;
+		
 		// simple counter to flush index files to avoid exceedingly high memory consumption
-
 		private int fileCount = 0;
 		private long seekPosition = 0;
 		
@@ -542,10 +694,14 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		private Index index;
 		// the seeklist (term - offset)
 		private Map<String, Long> seeklist;
+		// the link index
+		private LinkIndex linkIndex;
 		// the seeklist for the texts (document id - offset)
 		private Map<Long, Long> textsSeeklist;
 		// the mapping from document ids to titles
-		private Map<Long, String> titles;
+		private Map<Long, String> idsToTitles;
+		// the mapping from (processed) document titles to ids
+		private Map<String, Long> titlesToIds;
 		// the RandomAccessFile where the index will be written to
 		private File indexFile;
 		private RandomAccessFile raIndexFile;
@@ -577,7 +733,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		public IndexHandler(String dir, boolean load) {
 			// set references, initialize structures
 			this.dir = dir;
+			
 			this.analyzer = this.createAnalyzer();
+			
 			this.index = new Index();
 			this.indexFile = new File(this.dir
 					+ IndexHandler.indexFileName
@@ -590,9 +748,13 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			catch (FileNotFoundException e) { e.printStackTrace(); }
 			catch (IOException e) { e.printStackTrace(); }
 			
+			this.linkIndex = new LinkIndex();
+			
 			this.seeklist = new TreeMap<String, Long>();
 			this.textsSeeklist = new TreeMap<Long, Long>();
-			this.titles = new TreeMap<Long, String>();
+			this.idsToTitles = new TreeMap<Long, String>();
+			this.titlesToIds = new TreeMap<String, Long>();
+			
 			// if a new index is to be created, delete old files (if necessary)
 			if (!load) {
 				this.deleteOldFiles();
@@ -669,25 +831,48 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		/**
 		 * Add the id-title-mapping to the respective map.
 		 * Add the occurrences of all terms in the given text to the index.
+		 * Add the occurrences of links to other pages to the index.
 		 * Add the text to the texts file and store the offset.
 		 * If an IOException occurs, print it, but proceed.
 		 * @param id the id of the document
 		 * @param title the title of the document
 		 * @param text the text of the document
 		 */
-		public void indexPage(Long id, String title, String text) {
+		public void indexPage(final Long id, final String title, final String text) {
 			// id - title - mapping
-			this.titles.put(id, title);
+			this.idsToTitles.put(id, title);
+			this.titlesToIds.put(linkIndex.processTitle(title), id);
 			
 			// indexing
 			try {
+				/*
+				 * Indexing of Links
+				 */
+				List<String> linkedDocumentTitles = this.getLinkedDocumentTitles(text);
+				for (String linkedTitle : linkedDocumentTitles) {
+					if (linkedTitle != null && linkedTitle.length() > 0) {
+						// add linking to the linkIndex
+						this.linkIndex.addLinkingTitle(linkedTitle, title);
+						// if threshold is reached: write part of the index
+						this.byteCounter += (title.length() + linkedTitle.length());
+						if (this.byteCounter >= THRESHOLD) {
+							writeToIndexFile();
+							this.byteCounter = 0;
+						}
+					}
+				}
+				
+				/*
+				 * Indexing of Terms
+				 */
 				// process text (tokenizing, stopping, stemming)
 				List<String> terms = this.processRawText(text);
 				// add occurrences to index
 				for (Integer position = 0; position < terms.size(); position++) {
 					String term = terms.get(position);
 					this.index.addTermOccurrence(term, id, position);
-					this.byteCounter += term.length() + id.toString().length() + position.toString().length();
+					// if threshold is reached: write part of the index
+					this.byteCounter += (term.length() + id.toString().length() + position.toString().length());
 					if (this.byteCounter >= THRESHOLD) {
 						writeToIndexFile();
 						this.byteCounter = 0;
@@ -721,6 +906,32 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		/**
+		 * Parse the given text for links to other Wikipedia pages and return
+		 * a list of their titles.
+		 * @param wikiText the original text of the page (in Wikipedia syntax)
+		 * @return a list of titles (may be empty but not <tt>null</tt>)
+		 */
+		private List<String> getLinkedDocumentTitles(String wikiText) {
+			List<String> titles = new ArrayList<String>();
+			
+			// apply regular expressions to find links to other pages
+			for (Pattern pattern : linkingPatterns) {
+				// create the matcher for this pattern
+				Matcher matcher = pattern.matcher(wikiText);
+				// iterate over matching regions
+				while (matcher.find()) {
+					// add the content of the first matching group (page title)
+					String title = matcher.group(1);
+					if (!titles.contains(title)) {
+						titles.add(title);
+					}
+				}
+			}
+			
+			return titles;
+		}
+		
+		/**
 		 * Prepare the given text of a document for snippet creation, i.e., 
 		 * remove all markup. Also, prepare it for being written to the texts
 		 * file, i.e., replace tabs in the text and append a tab to it as 
@@ -734,11 +945,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					.replace('\t', ' ')
 					.concat("\t");
 			
-
-			
 			// remove matches
-			for (String pattern : patterns.keySet()) {
-				processedText = processedText.replaceAll(pattern, patterns.get(pattern));
+			for (String pattern : cleaningPatterns.keySet()) {
+				processedText = processedText.replaceAll(pattern, cleaningPatterns.get(pattern));
 			}
 			
 			// return with removed leading / trailing whitespace
@@ -751,10 +960,15 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					+ "_"
 					+ this.fileCount
 					+ IndexHandler.tempFileExtension);
+			
 			try {
-//				this.raIndexFile = new RandomAccessFile(indexFile, "rw");
-				this.fos = new FileOutputStream(this.indexFile);
-				this.bo = new BufferedOutputStream(fos, 8192 );
+				/*
+				 * write part of index
+				 */				
+				this.raIndexFile = new RandomAccessFile(indexFile, "rw");
+				this.fos = new FileOutputStream(raIndexFile.getFD());
+				this.bo = new BufferedOutputStream(fos, 8192);
+				
 				// get map of terms and their occurrence lists
 				Map<String, Index.TermList> termLists = this.index.getTermLists();
 				// write each occurrence list to the file
@@ -762,64 +976,78 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					// write the list using custom toIndexString method of TermList
 					termLists.get(term).toIndexString(this.bo, term, true);
 				}
+				
 				this.fileCount++;
 				this.bo.close();
 				this.fos.close();
+				
+				/*
+				 * write part of link index
+				 * 
+				 * TODO: implement; I did not implement splitting / merging
+				 */
+				
 			} catch(IOException e) {
 				e.printStackTrace();
 			}
+			
 			this.index = new Index();
 		}
 		
 		/**
 		 * Merges all parts of the index.
+		 * Merges all parts of the link index.
 		 * Creates the seeklist.
-		 * Writes the index, the seeklist and the id-titles-mapping to 
-		 * files (one file each).
+		 * Writes the index, the seeklist, the id-titles-mapping and the 
+		 * titles-id-mapping to files (one file each).
 		 * If an IOException occurs, print it, but proceed.
 		 */
 		public void createIndex() {
 			try {
+				/*
+				 * write remaining parts of the index and link index
+				 */
 				writeToIndexFile();
 	
+				/*
+				 * merge index files
+				 */
 				FilenameFilter filter = new FilenameFilter() {
 					@Override
 					public boolean accept(File dir, String name) {
 						return name.endsWith(IndexHandler.tempFileExtension);
 					}
 				};
+				
 				File directory = new File(this.dir);
-//				HashMap<File, BitSet> doneLines = new HashMap<File, BitSet>();
-//				HashMap<File, Integer> sizes = new HashMap<File, Integer>();
-//				// prepare HashMaps with file information
-//				for(File fileEntry : directory.listFiles(filter)) {
-//					int lines = getLineCount(fileEntry);
-//					doneLines.put(fileEntry, new BitSet(lines));
-//					sizes.put(fileEntry, lines);
-//				}
 				this.indexFile = new File(this.dir
 						+ IndexHandler.indexFileName
 						+ IndexHandler.fileExtension);
 				this.raIndexFile = new RandomAccessFile(this.indexFile, "rw");
-				this.fos = new FileOutputStream(raIndexFile.getFD());
-				this.bo = new BufferedOutputStream(fos, 8192);
+				this.fos = new FileOutputStream(this.raIndexFile.getFD());
+				this.bo = new BufferedOutputStream(this.fos, 8192);
 				File[] filesInFolder = directory.listFiles(filter);
 				BufferedReader[] fileBeginnings = new BufferedReader[filesInFolder.length];
 
-				Decoder b64 = Base64.getDecoder();
 				int index = 0;
 				int fileCount = filesInFolder.length;
 				String line = "";
 				String[] terms = new String[fileCount];
 				String[] lines = new String[fileCount];
+				
+				/*
+				 * setup merging tools: a BufferedReader for each of the files +
+				 * read the first lines each to determine what terms to merge
+				 * - lines and terms are considered separately to allow colons, etc.
+				 * in terms
+				 */
 				for(File fileEntry : filesInFolder) {
 					FileReader reader = new FileReader(fileEntry);
 					BufferedReader breed = new BufferedReader(reader);
 					fileBeginnings[index] = breed;
 					line = breed.readLine();
-					terms[index] = new String(b64.decode(line.substring(0, line.indexOf(":"))));
+					terms[index] = new String(DatatypeConverter.parseBase64Binary(line.substring(0, line.indexOf(":"))));
 					lines[index] = line.substring(line.indexOf(":"));
-//					System.out.println("Line: " + lines[index] + " for Term: " + terms[index]);
 					index++;
 				}
 				String term = getLowest(terms);
@@ -828,7 +1056,11 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				int countDown = fileCount;
 				int winnerSlot = -1;
 				line = "";
-//				System.out.println("lowest Term: " + term);
+				/*
+				 * whenever a term is merged the next line from the file it originated from is read
+				 * this is continued until all lines in all files are read / all readers reached the end of the file
+				 * lines of files will be merged whenever a read line yields the same term  
+				 */
 				while(countDown > 0) {
 					for(index = 0; index < fileCount; index++) {
 						if (lines[index] == null) continue;
@@ -837,7 +1069,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 							winnerSlot = index;
 							if (line.length() > 0) line += ";";
 							String toAppend = lines[index].substring(1, lines[index].lastIndexOf("."));
-//								System.out.println("toAppend: " + toAppend);
 								line += toAppend; 
 								String currentLine = fileBeginnings[index].readLine(); 
 								if (currentLine == null) {
@@ -849,9 +1080,8 @@ public class SearchEngineRetrEvil extends SearchEngine {
 									term = getLowest(lines);
 									term = term.substring(0, term.indexOf(":"));
 								} else {
-									terms[index] = new String(b64.decode(currentLine.substring(0, currentLine.indexOf(":"))));
+									terms[index] = new String(DatatypeConverter.parseBase64Binary(currentLine.substring(0, currentLine.indexOf(":"))));
 									lines[index] = currentLine.substring(currentLine.indexOf(":"));
-									
 								}
 						} else if (term.compareTo(currentTerm) < 0 && nextTerm.compareTo(currentTerm) < 0) {
 								nextTerm = currentTerm;
@@ -863,7 +1093,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					this.seeklist.put(term, this.raIndexFile.getFilePointer());
 					this.bo.write(line.getBytes());
 					this.bo.write(".".getBytes());
-//					System.out.println("Term with line: " + term + "--:--" + line);
 					line = "";
 					if (term.equals(nextTerm)) {
 						if (fileBeginnings[winnerSlot] == null) {
@@ -878,7 +1107,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 								countDown--;
 								nextTerm = getLowest(terms);
 							} else {
-								terms[winnerSlot] = new String(b64.decode(currentLine.substring(0, currentLine.indexOf(":"))));
+								terms[winnerSlot] = new String(DatatypeConverter.parseBase64Binary(currentLine.substring(0, currentLine.indexOf(":"))));
 								lines[winnerSlot] = currentLine.substring(currentLine.indexOf(":"));
 								nextTerm = terms[winnerSlot];
 							}
@@ -887,78 +1116,36 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					}
 					term = nextTerm;
 				}
-				
-				
-//				while (directory.listFiles(filter).length > 0) {
-//					
-//					Index.TermList list = new Index.TermList();
-//					boolean isFirstFile = true;
-//					
-////					for (int threadCount = 0; threadCount < 10; threadCount++) {
-////						Thread t = new Thread(new FileListProcessor(doneLines, sizes, filesInFolder,
-////							list, isFirstFile, this.indexFile, this.seeklist, this.seekPosition));
-////						t.start();
-////					}
-//					try {
-////						String indexString;
-//						StringBuilder indexStringBuilder = new StringBuilder();
-//						String line;
-//						Character firstChar = null;
-//						for (File fileEntry : filesInFolder) {
-//							boolean found = false;
-//							BitSet check = doneLines.get(fileEntry);
-//							LineNumberReader rd = new LineNumberReader(new FileReader(fileEntry)); 
-//							while ((line = rd.readLine()) != null) {
-//								if (check.get(rd.getLineNumber())) continue;
-//								
-//								if (isFirstFile) {
-//						            list.term = new String(b64.decode(line.substring(0, line.indexOf(":"))));
-//						            firstChar = list.term.charAt(0);
-//						            isFirstFile = false;
-//								}
-//						    	String bla = new String(b64.decode(line.substring(0, line.indexOf(":"))));
-//								if (firstChar.compareTo(bla.charAt(0)) < 0) break;
-//								found = bla.startsWith(list.term);
-//								if (found) {
-////									indexString = line.substring(line.indexOf(":") + 1);
-//									indexStringBuilder.append(line.substring(line.indexOf(":") + 1));
-////									Map <Long, Collection<Integer> > asd = Index.TermList.createFromIndexString(indexString).occurrences;
-////									for(Long key : asd.keySet()) {
-////									    if(list.occurrences.get(key) != null)
-////									        list.occurrences.get(key).addAll(asd.get(key));
-////									    else list.occurrences.put(key,asd.get(key));
-////									}
-//									check.set(rd.getLineNumber());
-//									break;
-//								}
-//							}
-//							rd.close();
-//							if (found) {
-//								if (check.cardinality() == sizes.get(fileEntry)) fileEntry.delete();
-//								continue;
-//							}
-//						}
-////						list.term = new String(Base64.getDecoder().decode(list.term));
-//						System.out.println("merging term: " + list.term);
-//						raIndexFile.seek(this.seekPosition);
-//						this.seeklist.put(list.term, this.seekPosition);
-//						bo.write(indexStringBuilder.toString().getBytes());
-////						list.toIndexString(bo, list.term, false);
-//						bo.flush();
-//						this.seekPosition = raIndexFile.getFilePointer();
-//						} catch(Exception e) {
-//							
-//						}
-//					
-//				}
 				this.bo.close();	
 				this.fos.close();
 				this.raIndexFile.close();
 				
 				/*
-				 * write the seeklist to a file
+				 * merge link index files
+				 * 
+				 * TODO: implement; I am just writing the whole list here
 				 */
-//				writeStringifiedToFile(
+				
+				try {
+					File linkIndexFile = new File(this.dir
+							+ IndexHandler.linkIndexFileName
+							+ IndexHandler.fileExtension);
+					this.raIndexFile = new RandomAccessFile(linkIndexFile, "rw");
+					this.fos = new FileOutputStream(raIndexFile.getFD());
+					this.bo = new BufferedOutputStream(fos);
+					
+					for (String key : this.linkIndex.getTitleLists().keySet()) {
+						this.linkIndex.getTitleLists().get(key).toIndexString(bo);
+					}
+					
+					raIndexFile.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+				
+				/*
+				 * write the seeklist to a file - would be too big to stringify first
+				 */
 				this.seekListToFile(this.dir 
 						+ IndexHandler.seekListFileName 
 						+ IndexHandler.fileExtension);
@@ -975,6 +1162,13 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				 */
 				writeStringifiedToFile(this.titlesToString(), this.dir 
 						+ IndexHandler.titlesFileName 
+						+ IndexHandler.fileExtension);
+				
+				/*
+				 * write the title-id-mapping to a file
+				 */
+				writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
+						+ IndexHandler.titlesToIdsFileName 
 						+ IndexHandler.fileExtension);
 			} catch (IOException e) {
 				e.printStackTrace();
@@ -997,141 +1191,11 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			return lowest;
 		}
 
-		private class FileListProcessor implements Runnable {
-
-			ConcurrentHashMap<File, BitSet> doneLines;
-			ConcurrentHashMap<File, Integer> sizes;
-			File[] filesInFolder;
-			Index.TermList list;
-			boolean isFirstFile;
-			RandomAccessFile raIndexFile;
-			FileOutputStream fos;
-			BufferedOutputStream bo;
-			private long seekPosition;
-			private Map<String, Long> seeklist; 
-			
-			public FileListProcessor(ConcurrentHashMap<File, BitSet> doneLines,
-					ConcurrentHashMap<File, Integer> sizes, File[] filesInFolder,
-					Index.TermList list, boolean isFirstFile, File indexFile, 
-					Map<String, Long> seeklist, long seekPosition) {
-				this.doneLines = doneLines;
-				this.sizes = sizes;
-				this.filesInFolder = filesInFolder;
-				this.list = list;
-				this.isFirstFile = isFirstFile;
-				this.seeklist = seeklist;
-				this.seekPosition = seekPosition;
-
-				try {
-					this.raIndexFile = new RandomAccessFile(indexFile, "rw");
-					this.fos = new FileOutputStream(raIndexFile.getFD());
-				} catch (FileNotFoundException e) {
-					e.printStackTrace();
-				} catch (IOException e) {
-					e.printStackTrace();
-				}
-				this.bo = new BufferedOutputStream(fos);
-			}
-			
-			@Override
-			public void run() {
-				try {
-				String indexString;
-				String line;
-				Character firstChar = null;
-				for (File fileEntry : filesInFolder) {
-					boolean found = false;
-					BitSet check = doneLines.get(fileEntry);
-					LineNumberReader rd = new LineNumberReader(new FileReader(fileEntry));
-					while ((line = rd.readLine()) != null) {
-						if (check.get(rd.getLineNumber())) continue;
-						synchronized (this) {
-							if (isFirstFile) {
-					            list.term = line.substring(0, line.indexOf(":"));
-					            firstChar = list.term.charAt(0);
-					            isFirstFile = false;
-							}
-				    	}
-						if (firstChar.compareTo(line.charAt(0)) < 0) break;
-						found = line.startsWith(list.term);
-						if (found) {
-							indexString = line.substring(line.indexOf(":") + 1);
-							Map <Long, Collection<Integer> > asd = Index.TermList.createFromIndexString(indexString).occurrences;
-							for(Long key : asd.keySet()) {
-								synchronized (this) {
-								    if(list.occurrences.get(key) != null)
-								        list.occurrences.get(key).addAll(asd.get(key));
-								    else list.occurrences.put(key,asd.get(key));
-								}
-							}
-							check.set(rd.getLineNumber());
-							break;
-						}
-					}
-					rd.close();
-					if (found) {
-						if (check.cardinality() == sizes.get(fileEntry)) fileEntry.delete();
-						break;
-					}
-				}
-				list.term = new String(Base64.getDecoder().decode(list.term));
-				
-				synchronized (this) {
-					raIndexFile.seek(this.seekPosition);
-					this.seeklist.put(list.term, this.seekPosition);
-					list.toIndexString(bo, list.term, false);
-					this.seekPosition = raIndexFile.getFilePointer();
-				}
-				} catch(Exception e) {
-					
-				}
-			}
-			
-		}
-		
-		
-		
-//		private void removeStringFromFile(String toRemove, String file) {
-//			try {
-//				File inFile = new File(file);
-////				File tempFile = File.createTempFile(inFile.getName(), ".tmp", inFile.getParentFile());
-//				File tempFile = new File(inFile.getAbsolutePath() + ".tmp");
-//				BufferedReader rd = new BufferedReader(new FileReader(inFile));
-//				PrintWriter wr = new PrintWriter(new FileWriter(tempFile));
-//				for (String line; (line = rd.readLine()) != null;) {
-//					if (!line.startsWith(toRemove)) {
-//						wr.write(line + "\n");
-//					}
-//				}
-//				rd.close();
-//				wr.close();
-//				inFile.delete();
-//				tempFile.renameTo(inFile);
-////				System.out.println("success: " + tempFile.renameTo(inFile) + " File " + inFile.getName());
-//			} catch (IOException e) {
-//				e.printStackTrace();
-//			}
-//		}
-		
-		private int getLineCount(File file) {
-			int lines = 0;
-			try {
-				LineNumberReader rd = new LineNumberReader(new FileReader(file));
-				while (rd.readLine() != null) {
-					lines++;
-				}
-				rd.close();
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
-			System.out.println(lines);
-			return lines;
-		}
-
 		private void writeStringifiedToFile(String content, String filename) throws IOException {
 			FileWriter fos = new FileWriter(filename);
 			BufferedWriter bo = new BufferedWriter(fos, 8192);
 			bo.write(content);
+			
 			bo.close();
 			fos.close();
 		}
@@ -1208,11 +1272,27 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		private String titlesToString() {
 			StringBuilder result = new StringBuilder();
 			
-			for (Long id : this.titles.keySet()) {	// uses iterator
+			for (Long id : this.idsToTitles.keySet()) {	// uses iterator
 				result
 					.append(id)
 					.append('\t')
-					.append(this.titles.get(id))
+					.append(this.idsToTitles.get(id))
+					.append('\t');
+			}
+			// remove the last '\t'
+			result.deleteCharAt(result.lastIndexOf("\t"));
+			
+			return result.toString();
+		}
+		
+		private String titlesToIdsToString() {
+			StringBuilder result = new StringBuilder();
+			
+			for (String title : this.titlesToIds.keySet()) {
+				result
+					.append(title)
+					.append('\t')
+					.append(this.titlesToIds.get(title))
 					.append('\t');
 			}
 			// remove the last '\t'
@@ -1222,9 +1302,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		/**
-		 * Load existing seek list and id-title-mapping. If the necessary files
-		 * are not present in the directory, log a message but proceed.
-		 * If an IOException occurs, print it, but proceed.
+		 * Load existing seek list, id-title-mapping and title-id-mapping. 
+		 * If the necessary files are not present in the directory, log a 
+		 * message but proceed. If an IOException occurs, print it, but proceed.
 		 */
 		private void loadIndex() {
 			try {
@@ -1233,28 +1313,37 @@ public class SearchEngineRetrEvil extends SearchEngine {
 						+ IndexHandler.seekListFileName 
 						+ IndexHandler.fileExtension);
 
-				Scanner scanner1 = new Scanner(seekListFile);
-				scanner1.useDelimiter("\\A");
-				this.parseSeekListFileString(scanner1.next());
-				scanner1.close();
+				Scanner scanner = new Scanner(seekListFile);
+				scanner.useDelimiter("\\A");
+				this.parseSeekListFileString(scanner.next());
+				scanner.close();
 				
 				// load the seek list of the texts file
 				File textsSeekListFile = new File(this.dir 
 						+ IndexHandler.textsSeekListFileName 
 						+ IndexHandler.fileExtension);
 				
-				Scanner scanner2 = new Scanner(textsSeekListFile);
-				scanner2.useDelimiter("\\A");
-				this.parseTextsSeekListFileString(scanner2.next());
-				scanner2.close();
+				scanner = new Scanner(textsSeekListFile);
+				scanner.useDelimiter("\\A");
+				this.parseTextsSeekListFileString(scanner.next());
+				scanner.close();
 				
 				// load the id-titles-mapping
 				File titlesFile = new File(this.dir 
 						+ IndexHandler.titlesFileName 
 						+ IndexHandler.fileExtension);
-				Scanner scanner = new Scanner(titlesFile);
+				scanner = new Scanner(titlesFile);
 				scanner.useDelimiter("\\A");
 				this.parseTitlesFileString(scanner.next());
+				scanner.close();
+				
+				// load the titles-id-mapping
+				File titlesToIdsFile = new File(this.dir 
+						+ IndexHandler.titlesToIdsFileName
+						+ IndexHandler.fileExtension);
+				scanner = new Scanner(titlesToIdsFile);
+				scanner.useDelimiter("\\A");
+				this.parseTitlesToIdsFileString(scanner.next());
 				scanner.close();
 			} catch (IOException e) {
 				e.printStackTrace();
@@ -1343,9 +1432,32 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					} else {
 						// parse the term's offset and add it to the map
 						title = token;
-						this.titles.put(id, title);
+						this.idsToTitles.put(id, title);
 					}
 					isId = !isId;
+				} catch (NumberFormatException e) {
+					e.printStackTrace();
+				}
+			}
+			tok.close();
+		}
+		
+		private void parseTitlesToIdsFileString(String string) {
+			Scanner tok = new Scanner(string);
+			tok.useDelimiter("\t");
+			boolean isTitle = true;
+			Long id = null;
+			String title = null;
+			while (tok.hasNext()) {
+				String token = tok.next();
+				try {
+					if (isTitle) {
+						title = token;
+					} else {
+						id = Long.parseLong(token);
+						this.titlesToIds.put(title, id);
+					}
+					isTitle = !isTitle;
 				} catch (NumberFormatException e) {
 					e.printStackTrace();
 				}
@@ -1364,17 +1476,23 @@ public class SearchEngineRetrEvil extends SearchEngine {
 						+ IndexHandler.indexFileName 
 						+ IndexHandler.fileExtension);
 				this.getErasedFile(dir 
-					+ IndexHandler.seekListFileName 
-					+ IndexHandler.fileExtension);
+						+ IndexHandler.linkIndexFileName 
+						+ IndexHandler.fileExtension);
 				this.getErasedFile(dir 
-					+ IndexHandler.textsFileName 
-					+ IndexHandler.fileExtension);
+						+ IndexHandler.seekListFileName 
+						+ IndexHandler.fileExtension);
 				this.getErasedFile(dir 
-					+ IndexHandler.textsSeekListFileName 
-					+ IndexHandler.fileExtension);
+						+ IndexHandler.textsFileName 
+						+ IndexHandler.fileExtension);
 				this.getErasedFile(dir 
-					+ IndexHandler.titlesFileName 
-					+ IndexHandler.fileExtension);
+						+ IndexHandler.textsSeekListFileName 
+						+ IndexHandler.fileExtension);
+				this.getErasedFile(dir 
+						+ IndexHandler.titlesFileName 
+						+ IndexHandler.fileExtension);
+				this.getErasedFile(dir 
+						+ IndexHandler.titlesToIdsFileName
+						+ IndexHandler.fileExtension);
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
@@ -1382,8 +1500,8 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		
 		/**
 		 * Tests whether the given directory has all necessary index files
-		 * (index file, seek list, id-title-mapping). If an IOException occurs,
-		 * return <tt>false</tt>.
+		 * (index file, seek list, id-title-mapping, ...). If an IOException 
+		 * occurs, return <tt>false</tt>.
 		 * @param dir the directory
 		 * @return <tt>true</tt> if all files are present and can be accessed, 
 		 * 	<tt>false</tt> otherwise
@@ -1393,6 +1511,12 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					+ IndexHandler.indexFileName 
 					+ IndexHandler.fileExtension);
 			if (!indexFile.canRead()) {
+				return false;
+			}
+			File linkIndexFile = new File(dir 
+					+ IndexHandler.linkIndexFileName
+					+ IndexHandler.fileExtension);
+			if (!linkIndexFile.canRead()) {
 				return false;
 			}
 			File seekListFile = new File(dir 
@@ -1417,6 +1541,12 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					+ IndexHandler.titlesFileName 
 					+ IndexHandler.fileExtension);
 			if (!titlesFile.canRead()) {
+				return false;
+			}
+			File titlesToIdsFile = new File(dir 
+					+ IndexHandler.titlesToIdsFileName 
+					+ IndexHandler.fileExtension);
+			if (!titlesToIdsFile.canRead()) {
 				return false;
 			}
 			// all files exist and can be read
@@ -1478,12 +1608,94 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			return new Index.TermList();
 		}
 		
+		public LinkIndex.TitleList readListForTitle(String title) {
+			if (title == null || "".equals(title)) {
+				return null;
+			}
+			
+			String processedTitle = this.linkIndex.processTitle(title);
+			
+			try {
+				File indexFile = new File(this.dir 
+						+ IndexHandler.linkIndexFileName 
+						+ IndexHandler.fileExtension);
+				RandomAccessFile raIndexFile = new RandomAccessFile(indexFile, "r");
+				
+				// find line via binary search
+				
+				// number of characters in the file (assume: 2 bytes per character)
+				long charNumber = raIndexFile.length() / 2;
+
+				long offset = 0;
+				long leftOffset = 0;
+				long rightOffset = Math.max(0, (charNumber - 1) * 2);
+				
+				long maxTries = 1;
+				while (charNumber > 0) {
+					charNumber /= 2;
+					maxTries++;
+				}
+
+				while (maxTries > 0) {
+					// read the next line
+					StringBuilder lineBuilder = new StringBuilder();
+					while (true) {
+						char nextChar = (char) raIndexFile.read();
+						if (nextChar == '\n') {
+							break;
+						} else {
+							lineBuilder.append(nextChar);
+						}
+					}
+					// build a TitleList
+					LinkIndex.TitleList list = LinkIndex.TitleList
+							.createFromIndexString(lineBuilder.toString());
+					// check the title
+					String listTitle = list.title;
+					if (processedTitle.equals(listTitle)) {
+						// return list
+						raIndexFile.close();
+						return list;
+					} else {
+						// recalculate offset
+						if (processedTitle.compareTo(listTitle) < 0) {
+							// processedTitle < listTitle, go left
+							rightOffset = offset;
+							offset -= (offset - leftOffset) / 2;
+							if (offset < 0) {
+								break;
+							}
+						} else {
+							// processedTitle > listTitle, go right
+							leftOffset = offset;
+							offset += (rightOffset - offset) / 2;
+							if (offset > (raIndexFile.length() - 1)) {
+								break;
+							}
+						}
+					}
+					// move the file pointer
+					raIndexFile.seek(offset);
+					// go to the next line
+					while (((char) raIndexFile.read()) != '\n') {}
+					// decrease tries
+					maxTries--;
+				}
+				
+				raIndexFile.close();
+				return null;
+			} catch (IOException e) {
+				e.printStackTrace();
+				return null;
+			}
+		}
+		
 		/**
 		 * Helper function which returns the total number of documents in the corpus.
 		 * @return the total number of documents
 		 */
 		public int totalNumberOfDocuments() {
-			return this.titles.keySet().size();
+			return this.idsToTitles.keySet().size();
 		}
 		
 		/**
@@ -1778,6 +1990,8 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		// answer query depending on its type TODO: make sure that topK and prf are used if necessary
 		if (isBooleanQuery(query)) {
 			return processBooleanQuery(query);			// boolean query
+		} else if (query.contains("LINKTO ")) {
+			return processLinkQuery(query);				// link query
 		} else if (query.contains("*")) {
 			return processPrefixQuery(query);			// prefix query
 		} else if (query.contains("'") || query.contains("\"")) {
@@ -1809,7 +2023,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		
 		for (Long documentId : documentIds) {
 			// get the title of the document
-			String title = this.indexHandler.titles.get(documentId);
+			String title = this.indexHandler.idsToTitles.get(documentId);
 			
 			if (PRINT_SNIPPETS) {
 				// get a snippet of the document
@@ -1857,7 +2071,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		Set<String> results = new TreeSet<String>();
 		for(Entry<String, Long> entry : this.indexHandler.seeklist.entrySet()) {
 			if(entry.getKey().startsWith(prefix))
-				results.add(this.indexHandler.titles.get(entry.getValue()));
+				results.add(this.indexHandler.idsToTitles.get(entry.getValue()));
 		}
 		return new ArrayList<String>(results);
 	}
@@ -1885,7 +2099,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			Index.TermList rightTermList = this.indexHandler.readListForTerm(rightProcessedTerm);
 			for (Long document : leftTermList.getOccurrences().keySet()) {
 				if (rightTermList.getOccurrences().containsKey(document)) {
-					results.add(this.indexHandler.titles.get(document));
+					results.add(this.indexHandler.idsToTitles.get(document));
 				}
 			}
 		} else if (query.contains(SearchEngineRetrEvil.OR)) {
@@ -1897,7 +2111,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			Index.TermList rightTermList = this.indexHandler.readListForTerm(rightProcessedTerm);
 			leftTermList.getOccurrences().keySet().addAll(rightTermList.getOccurrences().keySet());
 			for (Long document : leftTermList.getOccurrences().keySet()) {
-				results.add(this.indexHandler.titles.get(document));
+				results.add(this.indexHandler.idsToTitles.get(document));
 			}
 		} else if (query.contains(SearchEngineRetrEvil.BUT_NOT)) {
 			int index = Arrays.asList(terms).indexOf(SearchEngineRetrEvil.BUT_NOT);
@@ -1908,7 +2122,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			Index.TermList rightTermList = this.indexHandler.readListForTerm(rightProcessedTerm);
 			for (Long document : leftTermList.getOccurrences().keySet()) {
 				if (!rightTermList.getOccurrences().containsKey(document)) {
-					results.add(this.indexHandler.titles.get(document));
+					results.add(this.indexHandler.idsToTitles.get(document));
 				}
 			}
 		} else {
@@ -1920,6 +2134,30 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		return new ArrayList<String>(results);
+	}
+	
+	private ArrayList<String> processLinkQuery(String query) {
+		// pre-process the title
+		String processedTitle = this.indexHandler.linkIndex.processTitle(
+				query.replace("LINKTO ", "").trim());
+		// try to read the TitleList (may be null)
+		LinkIndex.TitleList titleList = this.indexHandler
+				.readListForTitle(processedTitle);
+		
+		// get the IDs of documents linking to the title
+		List<Long> documentIds = new ArrayList<Long>();
+		if (titleList != null) {
+			for (String listedTitle : titleList.getTitles()) {
+				// listedTitle is the pre-processed title, need the document ID
+				Long documentId = this.indexHandler.titlesToIds.get(listedTitle);
+				if (documentId != null && !documentIds.contains(documentId)) {
+					documentIds.add(documentId);
+				}
+			}
+		}
+		
+		// get the snippets of the documents linking to the title
+		return this.createQueryAnswerForDocuments(documentIds, new ArrayList<String>());
 	}
 	
 	/**
@@ -1971,7 +2209,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			// get document titles for the document id(s)
 			Set<Long> documentIds = termList.getOccurrences().keySet();
 			for (Long documentId : documentIds) {
-				String title = this.indexHandler.titles.get(documentId);
+				String title = this.indexHandler.idsToTitles.get(documentId);
 				titles.add(title != null ? title : "- title for id " + documentId + " -");
 			}
 		} catch (IOException e) {

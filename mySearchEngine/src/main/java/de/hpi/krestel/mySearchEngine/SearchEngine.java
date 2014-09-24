@@ -69,7 +69,7 @@ public abstract class SearchEngine {
 		ArrayList<String> gold;
 		String queryTerms = query.replaceAll(" ", "+");
 		try {
-			FileInputStream streamIn = new FileInputStream(this.wikiDirectory +queryTerms +".ser");
+			FileInputStream streamIn = new FileInputStream(this.wikiDirectory + queryTerms.replaceAll("/","-") + ".ser");
 			ObjectInputStream objectinputstream = new ObjectInputStream(streamIn);
 			gold = (ArrayList<String>) objectinputstream.readObject();
 			objectinputstream.close();
@@ -109,7 +109,7 @@ public abstract class SearchEngine {
 			}
 		}		
 		try {
-			FileOutputStream fout = new FileOutputStream(this.wikiDirectory +queryTerms +".ser");
+			FileOutputStream fout = new FileOutputStream(this.wikiDirectory + queryTerms.replaceAll("/","-") + ".ser");
 			ObjectOutputStream oos = new ObjectOutputStream(fout);
 			oos.writeObject(gold);
 			oos.close();

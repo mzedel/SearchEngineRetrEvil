@@ -11,6 +11,8 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.FilenameFilter;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -19,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
+import java.util.StringTokenizer;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -60,86 +63,8 @@ class IndexHandler {
 	private static final String fileExtension = ".txt";
 	// file extension
 	private static final String tempFileExtension = ".tmp";
-
 	// extended stopword list 
-	private static final HashSet<String> GERMAN_STOP_WORDS = new HashSet<String>(
-			Arrays.asList(new String[] { "a", "ab", "aber", "ach", "acht", "achte",
-					"achten", "achter", "achtes", "ag", "alle", "allein", "allem", 
-					"allen", "aller", "allerdings", "alles", "allgemeinen", "als", 
-					"also", "am", "an", "and", "andere", "anderen", "andern", "anders", 
-					"au", "auch", "auf", "aus", "ausser", "ausserdem", "b", "bald", 
-					"bei", "beide", "beiden", "beim", "beispiel", "bekannt", "bereits", 
-					"besonders", "besser", "besten", "bin", "bis", "bisher", "bist", 
-					"c", "d", "d.h", "da", "dabei", "dadurch", "dafür", "dagegen", 
-					"daher", "dahin", "dahinter", "damals", "damit", "danach", "daneben", 
-					"dank", "dann", "daran", "darauf", "daraus", "darf", "darfst", "darin", 
-					"darüber", "darum", "darunter", "das", "dasein", "daselbst", "dass", 
-					"dasselbe", "davon", "davor", "dazu", "dazwischen", "dein", "deine", 
-					"deinem", "deiner", "dem", "dementsprechend", "demgegenüber", 
-					"demgemäss", "demselben", "demzufolge", "den", "denen", "denn", 
-					"denselben", "der", "deren", "derjenige", "derjenigen", "dermassen", 
-					"derselbe", "derselben", "des", "deshalb", "desselben", "dessen", 
-					"deswegen", "dich", "die", "diejenige", "diejenigen", "dies", "diese", 
-					"dieselbe", "dieselben", "diesem", "diesen", "dieser", "dieses", "dir", 
-					"doch", "dort", "drei", "drin", "dritte", "dritten", "dritter", "drittes", 
-					"du", "durch", "durchaus", "dürfen", "dürft", "durfte", "durften", 
-					"e", "eben", "ebenso", "ehrlich", "ei", "ei,", "eigen", "eigene", "eigenen", 
-					"eigener", "eigenes", "ein", "einander", "eine", "einem", "einen", "einer", 
-					"eines", "einige", "einigen", "einiger", "einiges", "einmal", "eins", 
-					"elf", "en", "ende", "endlich", "entweder", "er", "Ernst", "erst", 
-					"erste", "ersten", "erster", "erstes", "es", "etwa", "etwas", "euch", 
-					"euer", "euers", "eurem", "f", "früher", "fünf", "fünfte", "fünften", 
-					"fünfter", "fünftes", "für", "g", "gab", "ganz", "ganze", "ganzen", 
-					"ganzer", "ganzes", "gar", "gedurft", "gegen", "gegenüber", "gehabt", 
-					"gehen", "geht", "gekannt", "gekonnt", "gemacht", "gemocht", "gemusst", 
-					"genug", "gerade", "gern", "gesagt", "geschweige", "gewesen", "gewollt", 
-					"geworden", "gibt", "ging", "gleich", "gott", "gross", "grosse", 
-					"grossen", "grosser", "grosses", "gut", "gute", "guter", "gutes", 
-					"h", "habe", "haben", "habt", "hast", "hat", "hatte", "hätte", 
-					"hatten", "hätten", "heisst", "her", "heute", "hier", "hin", "hinter",
-					"hoch", "i", "ich", "ihm", "ihn", "ihnen", "ihr", "ihre", "ihrem", 
-					"ihren", "ihrer", "ihres", "im", "immer", "in", "indem", "infolgedessen", 
-					"ins", "irgend", "ist", "j", "ja", "jahr", "jahre", "jahren", "je", 
-					"jede", "jedem", "jeden", "jeder", "jedermann", "jedermanns", "jedoch", 
-					"jemand", "jemandem", "jemanden", "jene", "jenem", "jenen", "jener", 
-					"jenes", "jetzt", "k", "kam", "kann", "kannst", "kaum", "kein", "keine", 
-					"keinem", "keinen", "keiner", "kleine", "kleinen", "kleiner", "kleines", 
-					"kommen", "kommt", "können", "könnt", "konnte", "könnte", "konnten", 
-					"kurz", "l", "lang", "lange", "leicht", "leide", "lieber", "los", 
-					"m", "machen", "macht", "machte", "mag", "magst", "mahn", "man", 
-					"manche", "manchem", "manchen", "mancher", "manches", "mann", "mehr", 
-					"mein", "meine", "meinem", "meinen", "meiner", "meines", "mensch", 
-					"menschen", "mich", "mir", "mit", "mittel", "mochte", "möchte", 
-					"mochten", "mögen", "möglich", "mögt", "morgen", "muss", "müssen", 
-					"musst", "müsst", "musste", "mussten", "n", "na", "nach", "nachdem", 
-					"nahm", "natürlich", "neben", "nein", "neue", "neuen", "neun", "neunte", 
-					"neunten", "neunter", "neuntes", "nicht", "nichts", "nie", "niemand", 
-					"niemandem", "niemanden", "noch", "nun", "nur", "o", "ob", "oben", "oder", 
-					"of", "offen", "oft", "ohne", "Ordnung", "p", "q", "r", "recht", "rechte", 
-					"rechten", "rechter", "rechtes", "richtig", "rund", "s", "sa", "sache", 
-					"sagt", "sagte", "sah", "satt", "schlecht", "Schluss", "schon", "sechs", 
-					"sechste", "sechsten", "sechster", "sechstes", "sehr", "sei", "seid", 
-					"seien", "sein", "seine", "seinem", "seinen", "seiner", "seines", "seit", 
-					"seitdem", "selbst", "sich", "sie", "sieben", "siebente", "siebenten", 
-					"siebenter", "siebentes", "sind", "so", "solang", "solche", "solchem", 
-					"solchen", "solcher", "solches", "soll", "sollen", "sollte", "sollten", 
-					"sondern", "sonst", "sowie", "später", "statt", "t", "tag", "tage", "tagen", 
-					"tat", "teil", "tel", "the", "to", "tritt", "trotzdem", "tun", "u", 
-					"über", "überhaupt", "übrigens", "uhr", "um", "und", "und?", "uns", 
-					"unser", "unsere", "unserem", "unserer", "unsers", "unter", "v", "vergangenen", 
-					"viel", "viele", "vielem", "vielen", "vielleicht", "vier", "vierte", 
-					"vierten", "vierter", "viertes", "vom", "von", "vor", "w", "wahr?", 
-					"während", "währenddem", "währenddessen", "wann", "war", "wäre", "waren", 
-					"wart", "warum", "was", "wegen", "weil", "weit", "weiter", "weitere", 
-					"weiteren", "weiteres", "welche", "welchem", "welchen", "welcher", 
-					"welches", "wem", "wen", "wenig", "wenige", "weniger", "weniges", 
-					"wenigstens", "wenn", "wer", "werde", "werden", "werdet", "wessen", 
-					"wie", "wieder", "will", "willst", "wir", "wird", "wirklich", "wirst", 
-					"wo", "wohl", "wollen", "wollt", "wollte", "wollten", "worden", "wurde", 
-					"würde", "wurden", "würden", "x", "y", "z", "z.b", "zehn", "zehnte", 
-					"zehnten", "zehnter", "zehntes", "zeit", "zu", "zuerst", "zugleich", 
-					"zum", "zunächst", "zur", "zurück", "zusammen", "zwanzig", "zwar", 
-					"zwei", "zweite", "zweiten", "zweiter", "zweites", "zwischen", "zwölf" }));
+	private static final String germanStopWordsFileName = "/GermanStopWords.csv";
 
 	// just to provide a simple way to switch between full index creation and just merging
 	public static final boolean DEV_MODE = true;
@@ -289,6 +214,20 @@ class IndexHandler {
 		 */
 		Version version = Version.LUCENE_47;	// newest version
 
+		InputStreamReader r = new InputStreamReader(this.getClass().getResourceAsStream(IndexHandler.germanStopWordsFileName));
+		BufferedReader buffRead = new BufferedReader(r);
+		String stopWordLine = "";
+		try {
+			stopWordLine = buffRead.readLine();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		
+		HashSet<String> stopWords = new HashSet<String>();
+		StringTokenizer st = new StringTokenizer(stopWordLine, ",");
+        while (st.hasMoreTokens())
+            stopWords.add(st.nextToken());
+		
 		/* 
 		 * Create and return the analyzer with the given compatibility version.
 		 * As of version 3.1, Snowball stopwords are used per default (can
@@ -297,7 +236,7 @@ class IndexHandler {
 		 * so we might replace these characters (or all UTF-8 characters which
 		 * are not ASCII in general) with some other representation.
 		 */
-		Analyzer analyzer = new GermanAnalyzer(version, CharArraySet.copy(version, GERMAN_STOP_WORDS));
+		Analyzer analyzer = new GermanAnalyzer(version, CharArraySet.copy(version, stopWords));
 
 		return analyzer;
 	}

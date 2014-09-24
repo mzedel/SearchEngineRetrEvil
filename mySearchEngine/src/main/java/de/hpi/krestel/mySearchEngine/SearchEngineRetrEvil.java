@@ -338,7 +338,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		// get the IDs of documents linking to the title
 		List<Long> documentIds = new ArrayList<Long>();
 		if (titleList != null) {
-			for (String listedTitle : titleList.getTitles()) {
+			// sort titles (TreeSet automatically uses natural ordering)
+			TreeSet<String> sortedTitles = new TreeSet<String>(titleList.getTitles());
+			
+			for (String listedTitle : sortedTitles) {
 				// listedTitle is the pre-processed title, need the document ID
 				Long documentId = this.indexHandler.getTitlesToIds().get(listedTitle);
 				if (documentId != null && !documentIds.contains(documentId)) {

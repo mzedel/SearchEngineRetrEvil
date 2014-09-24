@@ -4,7 +4,19 @@ package de.hpi.krestel.mySearchEngine;
 
 public class SearchEngineTest {
 
-	static String[] queries = {"LINKTO goldenehimbeere"};
+	static String[] queries = {
+		"LINKTO goldenehimbeere",
+		"\"ein trauriges Arschloch\"", 
+		"Toskana AND Wein", 
+		"sülz* AND staatlich", 
+		"öffentlicher nahverkehr stadtpiraten", 
+		"schnitzel AND kaffe BUT NOT schwein*", 
+		"Dr. No", 
+		"ICE BUT NOT T", 
+		"Bierzelt Oktoberfest", 
+		"Los Angeles sport", 
+		"08/15"
+	};
 	
 	static int topK = 10;
 	static int prf = 5;

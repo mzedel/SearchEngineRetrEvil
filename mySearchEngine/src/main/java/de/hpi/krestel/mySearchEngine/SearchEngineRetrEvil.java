@@ -72,6 +72,11 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * If <tt>b</tt> is <tt>0</tt>,
 	 * K can be computed without information about document length and average
 	 * document length.
+	 * 
+	 * Note: after due consideration, we chose to disregard normalization regarding
+	 * document length and we do not collect any information about document length
+	 * during indexing, so changing this parameter to something other than 0 is
+	 * not wise.
 	 */
 	private static final double BM25_B = 0.0;
 	
@@ -164,6 +169,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		return true;
 	}
 
+	/*
+	 * TODO: combine prefix queries, phrase queries, keyword queries
+	 */
 	@Override
 	ArrayList<String> search(String query, int topK, int prf) {
 		// invalid arguments: return an empty result set
@@ -171,10 +179,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			return new ArrayList<String>();
 		}
 		
-		// answer query depending on its type TODO: make sure that topK and prf are used if necessary
-		if (isBooleanQuery(query)) {
+		// answer query depending on its type
+		/*if (isBooleanQuery(query)) {
 			return processBooleanQuery(query);			// boolean query
-		} else if (query.contains("LINKTO ")) {
+		} else*/ if (query.contains("LINKTO ")) {
 			return processLinkQuery(query);				// link query
 		} else if (query.contains("*")) {
 			return processPrefixQuery(query);			// prefix query

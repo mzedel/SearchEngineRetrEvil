@@ -42,6 +42,9 @@ import org.apache.lucene.util.Version;
  */
 class IndexHandler {
 
+	// just to provide a simple way to switch between full index creation and just merging
+	public static final boolean DEV_MODE = true;
+
 	// name of the file which stores the index
 	private static final String indexFileName = "index";
 	// name of the file which stores the seeklist
@@ -140,9 +143,6 @@ class IndexHandler {
 					"zehnten", "zehnter", "zehntes", "zeit", "zu", "zuerst", "zugleich", 
 					"zum", "zunächst", "zur", "zurück", "zusammen", "zwanzig", "zwar", 
 					"zwei", "zweite", "zweiten", "zweiter", "zweites", "zwischen", "zwölf" }));
-
-	// just to provide a simple way to switch between full index creation and just merging
-	public static final boolean DEV_MODE = true;
 
 	/*
 	 * Insertion-ordered map of regular expressions which are used to remove

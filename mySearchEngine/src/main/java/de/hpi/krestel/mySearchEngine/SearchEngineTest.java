@@ -6,6 +6,22 @@ public class SearchEngineTest {
 
 	static String[] queries = {
 		"LINKTO goldenehimbeere",
+		"LINKTO Journal of Inorganic and Nuclear Chemistry",
+		"Actinium Uranisotop",
+		"China OR Smithee",
+		"China AND Smithee",
+		"China BUT NOT Smithee",
+		"Ang Lee AND Puppenhaus",
+		"\"Alan Smithee\" AND Schreibweise",
+		"Patr*",
+		"Alan AND Smith* OR \"namensgebende Element\" BUT NOT Harlekin",
+		"",
+	};
+	
+	/* final test:
+
+	static String[] queries = {
+		"LINKTO goldenehimbeere",
 		"\"ein trauriges Arschloch\"", 
 		"Toskana AND Wein", 
 		"sülz* AND staatlich", 
@@ -16,7 +32,9 @@ public class SearchEngineTest {
 		"Bierzelt Oktoberfest", 
 		"Los Angeles sport", 
 		"08/15"
-	};
+	}; 
+
+	 */
 	
 	static int topK = 10;
 	static int prf = 5;

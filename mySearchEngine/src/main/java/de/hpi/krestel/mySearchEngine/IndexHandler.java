@@ -519,6 +519,7 @@ class IndexHandler {
 			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
 					+ IndexHandler.titlesToIdsFileName 
 					+ IndexHandler.fileExtension);
+
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -594,7 +595,7 @@ class IndexHandler {
 							if (term.isEmpty()) continue;
 							term = term.substring(0, term.indexOf(":"));
 						} else
-							term = getLowest(terms);
+							term = currentTerm;
 						
 					} else {
 						terms[index] = conditionalBase64Converter(currentLine, base64Encoded);
@@ -631,7 +632,6 @@ class IndexHandler {
 						nextTerm = getLowest(terms);
 					} else {
 						terms[winnerSlot] = conditionalBase64Converter(currentLine, base64Encoded);
-//						System.out.println("winnerLine: " + currentLine);
 						lines[winnerSlot] = currentLine.substring(currentLine.indexOf(":"));
 						nextTerm = terms[winnerSlot];
 					}
@@ -1151,6 +1151,7 @@ class IndexHandler {
 					} else {
 						lineBuilder.append(nextChar);
 					}
+					System.out.println(" reaading ");
 				}
 				// build a TitleList
 				LinkIndex.TitleList list = LinkIndex.TitleList

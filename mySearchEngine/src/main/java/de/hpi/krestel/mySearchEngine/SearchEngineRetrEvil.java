@@ -1,8 +1,7 @@
 package de.hpi.krestel.mySearchEngine;
 
-import de.hpi.krestel.mySearchEngine.Index;
-
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -19,6 +18,7 @@ import java.util.TreeSet;
 import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 
+import org.xml.sax.InputSource;
 import org.xml.sax.helpers.DefaultHandler;
 
 /*
@@ -125,7 +125,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		String dumpFile = new File(dir).getParent() + "/" + "deWikipediaDump.xml";
 		if (IndexHandler.DEV_MODE)
 			dumpFile = new File(dir).getParent() + "/" + "testDump.xml";
-
 		/* 
 		 * create the indexer with the target dir; this instance is only used for
 		 * creating the index, not for answering queries
@@ -137,11 +136,12 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			indexer.createIndex();
 		try {
 			// get the SAX parser with the appropriate handler
-			SAXParser saxParser = SAXParserFactory.newInstance().newSAXParser();
+			SAXParser saxParser = SAXParserFactory.newInstance().newSAXParser();			
 			DefaultHandler saxHandler = new SAXHandler(this, indexer);
-			
+			InputSource is = new InputSource(new FileInputStream(dumpFile));
+//			is.setEncoding("ISO-8859-15");
 			// parse the dump
-			saxParser.parse(dumpFile, saxHandler);
+			saxParser.parse(is, saxHandler);
 		} catch (Exception e) {
 			this.log("Exception during SAX parsing: " + e.toString());
 		}

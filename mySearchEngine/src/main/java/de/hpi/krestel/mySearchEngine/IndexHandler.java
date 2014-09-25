@@ -174,6 +174,7 @@ class IndexHandler {
 		cleaningPatterns.put("  ", "");							// double spaces
 		cleaningPatterns.put("\n ", "\n");						// newline followed by space
 		cleaningPatterns.put("\n\n\n", "\n\n");					// triple newlines
+		cleaningPatterns.put("&nbsp;", " ");					// HTML whitespace
 	}
 
 	/*
@@ -1270,6 +1271,7 @@ class IndexHandler {
 		 * TODO: consider query terms; this is difficult because they are
 		 * pre-processed (which means that the text would have to be pre-
 		 * processed as well, which makes creating the snippet difficult)
+		 * TODO: make sure that UTF-8 works
 		 */
 		// simple algorithm: just use the beginning
 		int endIndex = Math.min(240, text.length());				// exclusive end index
@@ -1282,6 +1284,10 @@ class IndexHandler {
 				+ "...";
 	}
 
+	/*
+	 * Getters
+	 */
+	
 	public Map<String, Long> getSeeklist() {
 		return seeklist;
 	}

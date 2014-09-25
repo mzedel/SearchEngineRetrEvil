@@ -27,14 +27,7 @@ import javax.xml.parsers.SAXParserFactory;
 import org.xml.sax.InputSource;
 import org.xml.sax.helpers.DefaultHandler;
 
-/* TODO: describe
- * Describe your search engine briefly:
- *  - multi-threaded?
- *  - stemming?
- *  - stopword removal?
- *  - index algorithm?
- *  - etc.
- *  
+/* TODO: describe (indexing, merging, query processing...)
  *  - We use Lucene for pre-processing documents and queries (lower case,
  *    tokenizing, stemming, stopword removal using a newer german list)
  *  - Redirection pages are not indexed to begin with. Therefore, they are not
@@ -56,10 +49,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * Boolean operator "BUT NOT" in upper case
 	 */
 	private static final String BUT_NOT = " BUT NOT ";
-	/**
-	 * First part of "BUT NOT" in upper case (needed for internal handling).
-	 */
-	private static final String BUT = " BUT ";
 	/**
 	 * List of all boolean operators (for convenience)
 	 */
@@ -111,6 +100,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 */
 	private IndexHandler indexHandler;
 	
+	/**
+	 * Initialize the engine.
+	 */
 	public SearchEngineRetrEvil() {
 		// This should stay as is! Don't add anything here!
 		super();	
@@ -165,6 +157,13 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 	}
 
+	/**
+	 * Load the index.
+	 * @param dir base directory of the index files
+	 * @returns <tt>true</tt> if the index was loaded successfully;
+	 *   <tt>false</tt> otherwise, especially if files are missing (i.e., the
+	 *   index must be created first)
+	 */
 	@Override
 	boolean loadIndex(String dir) {
 		if (dir == null) {
@@ -187,8 +186,15 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		return true;
 	}
 
-	/*
+	/**
 	 * TODO: combine queries
+	 * Evaluate the given query.
+	 * @param query the query text
+	 * @param topK number of ranked documents to be returned (applies to
+	 *   keyword queries only)
+	 * @param prf the number of documents to be used for pseudo relevance 
+	 *   feedback (0 means no pseudo relevance feedback is used, applies to 
+	 *   keyword queries only)
 	 */
 	@Override
 	ArrayList<String> search(String query, int topK, int prf) {
@@ -199,15 +205,15 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		
 		// answer query depending on its type
 		if (isBooleanQuery(query)) {
-			return processBooleanQuery(query);			// boolean query
-		} else if (query.contains("LINKTO ")) {
-			return processLinkQuery(query);				// link query
-		} else if (query.contains("*")) {
-			return processPrefixQuery(query);			// prefix query
-		} else if (query.contains("'") || query.contains("\"")) {
-			return processPhraseQuery(query);			// phrase query
+			return processBooleanQuery(query);				// boolean query
+		} else if (isLinkQuery(query)) {
+			return processLinkQuery(query);					// link query
+		} else if (isPrefixQuery(query)) {
+			return processPrefixQuery(query);				// prefix query
+		} else if (isPhraseQuery(query)) {
+			return processPhraseQuery(query);				// phrase query
 		} else {
-			return processBM25Query(query, topK, prf);	// keyword query
+			return processKeywordQuery(query, topK, prf);	// keyword query
 		}
 	}
 	
@@ -283,9 +289,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	private ArrayList<String> processPrefixQuery(String query) {
 		String prefix = query.substring(0, query.indexOf("*"));
 		Set<String> results = new TreeSet<String>();
-		for(Entry<String, Long> entry : this.indexHandler.getSeeklist().entrySet()) {
-			if(entry.getKey().startsWith(prefix))
+		for (Entry<String, Long> entry : this.indexHandler.getSeeklist().entrySet()) {
+			if (entry.getKey().startsWith(prefix)) {
 				results.add(this.indexHandler.getIdsToTitles().get(entry.getValue()));
+			}
 		}
 		return new ArrayList<String>(results);
 	}
@@ -303,8 +310,85 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				return true;
 			}
 		}
-		
 		return false;
+	}
+	
+	/**
+	 * Check if a given query is a link query (i.e., queries references to a
+	 * given page).
+	 * @param query the query text
+	 * @return <tt>true</tt> if the query is a link query, 
+	 * 		<tt>false</tt> otherwise
+	 */
+	private boolean isLinkQuery(String query) {
+		return query.contains("LINKTO ");
+	}
+
+	/**
+	 * Check if a given query is a prefix query (i.e., queries for pages with
+	 * terms starting with the given prefix).
+	 * @param query the query text
+	 * @return <tt>true</tt> if the query is a prefix query, 
+	 * 		<tt>false</tt> otherwise
+	 */
+	private boolean isPrefixQuery(String query) {
+		return query.contains("*");
+	}
+	
+	/**
+	 * Check if a given query is a phrase query (i.e., queries for pages which
+	 * include the exact phrase).
+	 * @param query the query text
+	 * @return <tt>true</tt> if the query is a phrase query, 
+	 * 		<tt>false</tt> otherwise
+	 */
+	private boolean isPhraseQuery(String query) {
+		// check if the query includes a delimiter twice (to mark a phrase)
+		int indexLeft, indexRight;
+		
+		indexLeft = query.indexOf('\'');
+		if (indexLeft >= 0) {
+			indexRight = query.indexOf('\'', indexLeft + 1);
+			if (indexRight != -1) {
+				return true; // 'phrase'
+			}
+		}
+		indexLeft = query.indexOf('\"');
+		if (indexLeft >= 0) {
+			indexRight = query.indexOf('\"', indexLeft + 1);
+			if (indexRight != -1) {
+				return true; // "phrase"
+			}
+		}
+		
+		return false; // nothing found
+	}
+	
+	/**
+	 * Given a phrase query, extract its (first) phrase from it without the
+	 * enclosing quotation marks (see {@link #isPhraseQuery(String)}).
+	 * @param query the query text
+	 * @return the phrase (may be "")
+	 */
+	private String extractPhraseFromQuery(String query) {
+		int indexLeft, indexRight;
+		
+		indexLeft = query.indexOf('\'');
+		if (indexLeft >= 0) {
+			indexRight = query.indexOf('\'', indexLeft + 1);
+			if (indexRight != -1) {
+				return query.substring(indexLeft + 1, indexRight); // 'phrase'
+			}
+		}
+		indexLeft = query.indexOf('\"');
+		if (indexLeft >= 0) {
+			indexRight = query.indexOf('\"', indexLeft + 1);
+			if (indexRight != -1) {
+				return query.substring(indexLeft + 1, indexRight); // "phrase"
+			}
+		}
+		
+		return ""; // empty or missing phrase
 	}
 	
 	/**
@@ -318,9 +402,11 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		
 		query = query.toUpperCase();	// "and" => "AND"
 		
-		String[] terms = query.split(" ");
 		if (query.contains(SearchEngineRetrEvil.AND)) {
-			int index = Arrays.asList(terms).indexOf(SearchEngineRetrEvil.AND.trim());
+			// intersection of occurrences
+			String[] terms = query.replaceFirst(SearchEngineRetrEvil.AND, " !#@#! ").split(" ");
+			int index = Arrays.asList(terms).indexOf("!#@#!");
+			
 			String leftProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index - 1)).get(0);
 			String rightProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index + 1)).get(0);
 			
@@ -336,7 +422,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				results.add(this.indexHandler.getIdsToTitles().get(documentId));
 			}
 		} else if (query.contains(SearchEngineRetrEvil.OR)) {
-			int index = Arrays.asList(terms).indexOf(SearchEngineRetrEvil.OR.trim());
+			// union of occurrences
+			String[] terms = query.replaceFirst(SearchEngineRetrEvil.OR, " !#@#! ").split(" ");
+			int index = Arrays.asList(terms).indexOf("!#@#!");
+			
 			String leftProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index - 1)).get(0);
 			String rightProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index + 1)).get(0);
 			
@@ -352,7 +441,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				results.add(this.indexHandler.getIdsToTitles().get(documentId));
 			}
 		} else if (query.contains(SearchEngineRetrEvil.BUT_NOT)) {
-			int index = Arrays.asList(terms).indexOf(SearchEngineRetrEvil.BUT.trim());
+			// difference of occurrences
+			String[] terms = query.replaceFirst(SearchEngineRetrEvil.BUT_NOT, " !#@#! ").split(" ");
+			int index = Arrays.asList(terms).indexOf("!#@#!");
+			
 			String leftProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index - 1)).get(0);
 			String rightProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index + 1)).get(0);
 			
@@ -378,6 +470,11 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		return new ArrayList<String>(results);
 	}
 	
+	/**
+	 * Process the query as a link query.
+	 * @param query the query text
+	 * @return a list of titles of documents
+	 */
 	private ArrayList<String> processLinkQuery(String query) {
 		// pre-process the title
 		String processedTitle = LinkIndex.processTitle(query.replace("LINKTO ", "").trim());
@@ -388,7 +485,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		// get the IDs of documents linking to the title
 		List<Long> documentIds = new ArrayList<Long>();
 		if (titleList != null) {
-			// sort titles (TreeSet automatically uses natural ordering)
+			// sort titles (TreeSet is inherently sorted by natural ordering)
 			TreeSet<String> sortedTitles = new TreeSet<String>(titleList.getTitles());
 			
 			for (String listedTitle : sortedTitles) {
@@ -406,25 +503,53 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	
 	/**
 	 * TODO: implement
-	 * @param query
-	 * @return
+	 * TODO: strict evaluation? (check if proposed page texts really include the unprocessed phrase)
+	 * Process the query as a phrase query. If the phrase is empty (or missing),
+	 * an empty list of documents is returned.
+	 * @param query the query text
+	 * @return a list of titles of documents
 	 */
 	private ArrayList<String> processPhraseQuery(String query) {
-		Set<String> results = new TreeSet<String>();
-//		int firstIndex = query.indexOf("'") < query.indexOf("\"") ? query.indexOf("'") : query.indexOf("\"");
-//		int lastIndex = query.lastIndexOf("'") > query.lastIndexOf("\"") ? query.lastIndexOf("'") : query.lastIndexOf("\"");
-//		String content = query.substring(firstIndex, lastIndex);
-//		String[] terms = content.split(" ");
-//		List<Index.TermList> termLists = new ArrayList<Index.TermList>();
-//		for(String term : terms) {
-//			termLists.add(this.indexHandler.readListForTerm(term));
-//		}
-//		for(Index.TermList list : termLists) {
-//			for(Entry<Long, Collection<Integer>> occurrence : list.occurrences.entrySet()) {
-//				if(occurrence.)
-//			}
-//		}
-		return new ArrayList<String>(results);
+		// extract the phrase
+		String phrase = extractPhraseFromQuery(query);
+		if ("".equals(phrase)) {
+			return new ArrayList<String>();
+		}
+		
+		// pre-process the phrase
+		List<String> processedPhrase;
+		try {
+			processedPhrase = this.indexHandler.processRawText(phrase);
+		} catch (IOException e) {	// should never happen
+			processedPhrase = new ArrayList<String>();
+			e.printStackTrace();
+		}
+		if (processedPhrase.size() == 0) {
+			return new ArrayList<String>();
+		}
+		
+		// search for the given sequence of processed terms in documents
+		List<Index.TermList> termLists = new ArrayList<Index.TermList>();
+		for (String term : processedPhrase) {
+			termLists.add(this.indexHandler.readListForTerm(term));
+		}
+		Set<Long> documentIds = new TreeSet<Long>();
+		for (Entry<Long, Collection<Integer>> entry : termLists.get(0).getOccurrences().entrySet()) {
+			long documentId = entry.getKey();
+			startPositionsLoop: for (int startPosition : entry.getValue()) {
+				int nextTermIndex = 1;
+				int nextPosition = startPosition + 1;
+				while (nextTermIndex < termLists.size()) {
+					Collection<Integer> positions = termLists.get(nextTermIndex).getOccurrences().get(documentId);
+					if (positions == null || !positions.contains(nextPosition)) {
+						continue startPositionsLoop;
+					}
+				}
+				documentIds.add(documentId);
+			}
+		}
+		
+		return this.createQueryAnswerForDocuments(new ArrayList<Long>(documentIds), processedPhrase);
 	}
 	
 	/**
@@ -445,7 +570,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 *   (if it is <tt>0</tt>, no pseudo relevance feedback is used)
 	 * @return a list of titles of ranked documents
 	 */
-	private ArrayList<String> processBM25Query(String query, int topK, int prf) {
+	private ArrayList<String> processKeywordQuery(String query, int topK, int prf) {
 		ArrayList<String> result = new ArrayList<String>();
 		
 		try {
@@ -552,7 +677,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	
 	/**
 	 * Helper method to perform the actual BM25 query, see 
-	 * {@link #processBM25Query(String, int, int)}.
+	 * {@link #processKeywordQuery(String, int, int)}.
 	 */
 	private ArrayList<Long> processInnerBM25Query(List<String> terms, int topK) {
 		ArrayList<Long> result = new ArrayList<Long>();
@@ -636,19 +761,19 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				// if there are positions, get their count
 				int f = termDocPositions != null 
 						? termDocPositions.size() 
-								: 0;
-						// qf: frequency of the term in the query
-						int qf = termQueryFrequency.get(term);  	// must not be null
+						: 0;
+				// qf: frequency of the term in the query
+				int qf = termQueryFrequency.get(term);  	// must not be null
 
-						/*
-						 * Compute the score. Note: for very few documents, the first
-						 * factor (log ...) can be 0 (when ... is 1). Here, the natural
-						 * logarithm is used (because Math offers it), but the base
-						 * does not really matter.
-						 */
-						score += (Math.log(1.0 / ((n + 0.5) / ((N - n) + 0.5)))
-								* (((BM25_K1 + 1.0) * f) / (K + f))
-								* (((BM25_K2 + 1.0) * qf) / (BM25_K2 + qf)));
+				/*
+				 * Compute the score. Note: for very few documents, the first
+				 * factor (log ...) can be 0 (when ... is 1). Here, the natural
+				 * logarithm is used (because Math offers it), but the base
+				 * does not really matter.
+				 */
+				score += (Math.log(1.0 / ((n + 0.5) / ((N - n) + 0.5)))
+						* (((BM25_K1 + 1.0) * f) / (K + f))
+						* (((BM25_K2 + 1.0) * qf) / (BM25_K2 + qf)));
 			}
 
 			// make sure that the scores are unique to avoid problems with the map
@@ -679,6 +804,15 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		return result;
 	}
 	
+	/**
+	 * Compute the normalized distributed cumulative gain using the gold ranking
+	 * and the actual ranking, up to a given rank.
+	 * @param goldRanking the gold ranking
+	 * @param ranking the ranking (snippets may be used here, see 
+	 *   {@link #getTitleFromQueryAnswer(String)})
+	 * @param at the desired rank
+	 * @return the NDCG
+	 */
 	@Override
 	Double computeNdcg(ArrayList<String> goldRanking, ArrayList<String> ranking, int at) {
 		double dcg = 0.0;

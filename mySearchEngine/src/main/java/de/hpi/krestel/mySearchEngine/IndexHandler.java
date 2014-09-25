@@ -306,7 +306,7 @@ class IndexHandler {
 			for (String linkedTitle : linkedDocumentTitles) {
 				if (linkedTitle != null && linkedTitle.length() > 0) {
 					// add linking to the linkIndex
-					this.getLinkIndex().addLinkingTitle(title, linkedTitle);
+					this.getLinkIndex().addLinkingTitle(linkedTitle, title);
 					// if threshold is reached: write part of the index
 					this.byteCounter += (title.length() + linkedTitle.length());
 					if (this.byteCounter >= THRESHOLD) {
@@ -608,15 +608,17 @@ class IndexHandler {
 				}
 			}
 			if (term.isEmpty()) break;
-			if (fileName.equals(IndexHandler.indexFileName))
+			if (fileName.equals(IndexHandler.indexFileName)) {
 				this.bo.flush(); this.fos.flush();
 				this.seeklist.put(term, this.raIndexFile.getFilePointer());
+			}
 			if (fileName.equals(IndexHandler.linkIndexFileName)) {
 				this.bo.write(term.getBytes());
 				this.bo.write(TitleList.colon);
 			}
 			this.bo.write(line.getBytes());
 			this.bo.write(TitleList.dot);
+			if (fileName.equals(IndexHandler.linkIndexFileName)) this.bo.write("\n".getBytes());
 			if (term.equals(nextTerm)) {
 				if (winnerSlot == -1) break;
 				if (fileBeginnings[winnerSlot] == null) {
@@ -1151,7 +1153,6 @@ class IndexHandler {
 					} else {
 						lineBuilder.append(nextChar);
 					}
-					System.out.println(" reaading ");
 				}
 				// build a TitleList
 				LinkIndex.TitleList list = LinkIndex.TitleList

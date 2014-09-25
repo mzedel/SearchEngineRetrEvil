@@ -579,7 +579,6 @@ class IndexHandler {
 				if (lines[index] == null) continue;
 				String currentTerm = terms[index];
 				if (term.compareTo(currentTerm) == 0) {
-					winnerSlot = index;
 					if (line.length() > 0) line += ";";
 					String toAppend = lines[index].substring(1, lines[index].lastIndexOf("."));
 					line += toAppend; 
@@ -594,15 +593,18 @@ class IndexHandler {
 							term = getLowest(lines);
 							if (term.isEmpty()) continue;
 							term = term.substring(0, term.indexOf(":"));
-						} else
-							term = currentTerm;
+						} else {
+							term = getLowest(terms);
+							if (term.isEmpty()) term = currentTerm;
+						}
 						
 					} else {
 						terms[index] = conditionalBase64Converter(currentLine, base64Encoded);
 						lines[index] = currentLine.substring(currentLine.indexOf(":"));
+						winnerSlot = index;
 					}
 				} else if (term.compareTo(currentTerm) < 0 && nextTerm.compareTo(currentTerm) < 0) {
-					nextTerm = currentTerm;
+					nextTerm = getLowest(terms);
 				} else {
 					continue;
 				}
@@ -621,9 +623,7 @@ class IndexHandler {
 			if (fileName.equals(IndexHandler.linkIndexFileName)) this.bo.write("\n".getBytes());
 			if (term.equals(nextTerm)) {
 				if (winnerSlot == -1) break;
-				if (fileBeginnings[winnerSlot] == null) {
-					nextTerm = getLowest(terms);
-				} else {
+				if (fileBeginnings[winnerSlot] != null) {
 					String currentLine = fileBeginnings[winnerSlot].readLine(); 
 					if (currentLine == null || currentLine.trim().isEmpty()) {
 						fileBeginnings[winnerSlot].close();
@@ -631,13 +631,12 @@ class IndexHandler {
 						lines[winnerSlot] = null;
 						terms[winnerSlot] = null;
 						countDown--;
-						nextTerm = getLowest(terms);
 					} else {
 						terms[winnerSlot] = conditionalBase64Converter(currentLine, base64Encoded);
 						lines[winnerSlot] = currentLine.substring(currentLine.indexOf(":"));
-						nextTerm = terms[winnerSlot];
 					}
 				}
+				nextTerm = getLowest(terms);
 				winnerSlot = -1;
 			}
 			term = nextTerm;
@@ -694,6 +693,7 @@ class IndexHandler {
 		for(String line : lines) {
 			if(line != null && lowest.compareTo(line) > 0)
 				lowest = line;
+			System.out.println(lines[0] + lines[1] + lines[2] + lines[3] + lines[4] + lines[5] + " lowest should be: " + lowest);
 		}
 		return lowest;
 	}

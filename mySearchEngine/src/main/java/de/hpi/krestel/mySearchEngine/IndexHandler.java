@@ -488,7 +488,7 @@ class IndexHandler {
 			/*
 			 * merge link index files
 			 */
-			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
+//			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
 
 //			for (String key : this.getLinkIndex().getTitleLists().keySet()) {
 //				this.getLinkIndex().getTitleLists().get(key).toIndexString(bo);
@@ -580,14 +580,11 @@ class IndexHandler {
 						countDown--;
 						if (fileName.equals(IndexHandler.indexFileName)) {
 							term = getLowest(lines);
+							if (term.isEmpty()) continue;
 							System.out.println("currentTerm: " + term + " to file: " + fileName);
 							term = term.substring(0, term.indexOf(":"));
 						} else
 							term = getLowest(terms);
-						if (term.isEmpty()) {
-							term = currentTerm;
-							continue;
-						}
 						
 					} else {
 						terms[index] = conditionalBase64Converter(currentLine, base64Encoded);
@@ -601,6 +598,7 @@ class IndexHandler {
 				}
 			}
 			if (fileName.equals(IndexHandler.indexFileName))
+				this.bo.flush(); this.fos.flush();
 				this.seeklist.put(term, this.raIndexFile.getFilePointer());
 			if (fileName.equals(IndexHandler.linkIndexFileName)) {
 				this.bo.write(term.getBytes());

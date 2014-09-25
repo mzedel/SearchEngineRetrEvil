@@ -45,6 +45,9 @@ import de.hpi.krestel.mySearchEngine.LinkIndex.TitleList;
  */
 class IndexHandler {
 
+	// just to provide a simple way to switch between full index creation and just merging
+	public static final boolean DEV_MODE = true;
+
 	// name of the file which stores the index
 	private static final String indexFileName = "index";
 	// name of the file which stores the seeklist
@@ -65,9 +68,6 @@ class IndexHandler {
 	private static final String tempFileExtension = ".tmp";
 	// extended stopword list 
 	private static final String germanStopWordsFileName = "/GermanStopWords.csv";
-
-	// just to provide a simple way to switch between full index creation and just merging
-	public static final boolean DEV_MODE = true;
 
 	/*
 	 * Insertion-ordered map of regular expressions which are used to remove

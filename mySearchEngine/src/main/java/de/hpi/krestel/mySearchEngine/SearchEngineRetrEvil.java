@@ -3,11 +3,15 @@ package de.hpi.krestel.mySearchEngine;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -21,7 +25,7 @@ import javax.xml.parsers.SAXParserFactory;
 import org.xml.sax.InputSource;
 import org.xml.sax.helpers.DefaultHandler;
 
-/*
+/* TODO: describe
  * Describe your search engine briefly:
  *  - multi-threaded?
  *  - stemming?
@@ -33,6 +37,8 @@ import org.xml.sax.helpers.DefaultHandler;
  *    tokenizing, stemming, stopword removal using a newer german list)
  *  - Redirection pages are not indexed to begin with. Therefore, they are not
  *    considered in the ranking (of other documents) either.
+ *  - Boolean operators in queries must be in upper case and enclosed in 
+ *    whitespace (e.g. " AND ").
  */
 public class SearchEngineRetrEvil extends SearchEngine {
 	
@@ -48,6 +54,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * Boolean operator "BUT NOT" in upper case
 	 */
 	private static final String BUT_NOT = " BUT NOT ";
+	/**
+	 * First part of "BUT NOT" in upper case (needed for internal handling).
+	 */
+	private static final String BUT = " BUT ";
 	/**
 	 * List of all boolean operators (for convenience)
 	 */
@@ -138,12 +148,17 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			// get the SAX parser with the appropriate handler
 			SAXParser saxParser = SAXParserFactory.newInstance().newSAXParser();			
 			DefaultHandler saxHandler = new SAXHandler(this, indexer);
-			InputSource is = new InputSource(new FileInputStream(dumpFile));
-//			is.setEncoding("ISO-8859-15");
-			// parse the dump
-			saxParser.parse(is, saxHandler);
+
+			// parse the dump (UTF-8)
+			InputStream inputStream = new FileInputStream(dumpFile);
+			Reader reader = new InputStreamReader(inputStream,"UTF-8");
+			InputSource source = new InputSource(reader);
+			source.setEncoding("UTF-8");
+			
+			saxParser.parse(source, saxHandler);
 		} catch (Exception e) {
 			this.log("Exception during SAX parsing: " + e.toString());
+			e.printStackTrace();
 		}
 	}
 
@@ -170,7 +185,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	}
 
 	/*
-	 * TODO: combine prefix queries, phrase queries, keyword queries
+	 * TODO: combine queries
 	 */
 	@Override
 	ArrayList<String> search(String query, int topK, int prf) {
@@ -180,9 +195,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		// answer query depending on its type
-		/*if (isBooleanQuery(query)) {
+		if (isBooleanQuery(query)) {
 			return processBooleanQuery(query);			// boolean query
-		} else*/ if (query.contains("LINKTO ")) {
+		} else if (query.contains("LINKTO ")) {
 			return processLinkQuery(query);				// link query
 		} else if (query.contains("*")) {
 			return processPrefixQuery(query);			// prefix query
@@ -234,22 +249,26 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	}
 	
 	/**
-	 * Check if a given query is a boolean query (i.e., contains at least one
-	 * boolean operator).
-	 * @param query the query text
-	 * @return <tt>true</tt> if the query is a boolean query, 
-	 * 		<tt>false</tt> otherwise
+	 * Extract the title from a query answer, depending on whether it includes
+	 * a snippet or not (see {@link #createQueryAnswerForDocuments(List, List)}).
+	 * @param queryAnswer the query answer
+	 * @return the title, never <tt>null</tt>
 	 */
-	private boolean isBooleanQuery(String query) {
-		query = query.toUpperCase();	// "and" => "AND"
-		
-		for (String operator : SearchEngineRetrEvil.BOOLEAN_OPERATORS) {
-			if (query.contains(operator)) {
-				return true;
-			}
+	private String getTitleFromQueryAnswer(String queryAnswer) {
+		if (queryAnswer == null) {
+			return "";
 		}
-		
-		return false;
+		if (PRINT_SNIPPETS) {
+			int titleEnd = queryAnswer.indexOf('\n');
+			if (titleEnd > 0) {
+				return queryAnswer.substring(0, titleEnd);
+			} else {
+				return "";
+			}
+		} else {
+			// there should be nothing else except the title
+			return queryAnswer;
+		}
 	}
 	
 	/**
@@ -269,10 +288,25 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	}
 	
 	/**
+	 * Check if a given query is a boolean query (i.e., contains at least one
+	 * boolean operator). Boolean operators must be in upper case.
+	 * @param query the query text
+	 * @return <tt>true</tt> if the query is a boolean query, 
+	 * 		<tt>false</tt> otherwise
+	 */
+	private boolean isBooleanQuery(String query) {
+		for (String operator : SearchEngineRetrEvil.BOOLEAN_OPERATORS) {
+			if (query.contains(operator)) {
+				return true;
+			}
+		}
+		
+		return false;
+	}
+	
+	/**
 	 * Overly simplistic boolean query processing assuming the query operator 
 	 * sits between two search terms.
-	 * TODO: merging keySet()s does not work properly (NullPointerException; not beautiful)
-	 * TODO: merge boolean and phrase query handling (”Art* BUT NOT Artikel”)
 	 * @param query the query text
 	 * @return a list of titles of relevant documents
 	 */
@@ -283,39 +317,52 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		
 		String[] terms = query.split(" ");
 		if (query.contains(SearchEngineRetrEvil.AND)) {
-			int index = Arrays.asList(terms).indexOf(SearchEngineRetrEvil.AND);
+			int index = Arrays.asList(terms).indexOf(SearchEngineRetrEvil.AND.trim());
 			String leftProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index - 1)).get(0);
 			String rightProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index + 1)).get(0);
 			
 			Index.TermList leftTermList = this.indexHandler.readListForTerm(leftProcessedTerm);
 			Index.TermList rightTermList = this.indexHandler.readListForTerm(rightProcessedTerm);
-			for (Long document : leftTermList.getOccurrences().keySet()) {
-				if (rightTermList.getOccurrences().containsKey(document)) {
-					results.add(this.indexHandler.getIdsToTitles().get(document));
-				}
+			
+			Set<Long> leftSet = leftTermList.getOccurrences().keySet();
+			Set<Long> rightSet = rightTermList.getOccurrences().keySet();
+			Set<Long> intersection = new TreeSet<Long>(leftSet);
+			intersection.retainAll(rightSet);
+			
+			for (Long documentId : intersection) {
+				results.add(this.indexHandler.getIdsToTitles().get(documentId));
 			}
 		} else if (query.contains(SearchEngineRetrEvil.OR)) {
-			int index = Arrays.asList(terms).indexOf(SearchEngineRetrEvil.OR);
+			int index = Arrays.asList(terms).indexOf(SearchEngineRetrEvil.OR.trim());
 			String leftProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index - 1)).get(0);
 			String rightProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index + 1)).get(0);
 			
 			Index.TermList leftTermList = this.indexHandler.readListForTerm(leftProcessedTerm);
 			Index.TermList rightTermList = this.indexHandler.readListForTerm(rightProcessedTerm);
-			leftTermList.getOccurrences().keySet().addAll(rightTermList.getOccurrences().keySet());
-			for (Long document : leftTermList.getOccurrences().keySet()) {
-				results.add(this.indexHandler.getIdsToTitles().get(document));
+			
+			Set<Long> leftSet = leftTermList.getOccurrences().keySet();
+			Set<Long> rightSet = rightTermList.getOccurrences().keySet();
+			Set<Long> union = new TreeSet<Long>(leftSet);
+			union.addAll(rightSet);
+			
+			for (Long documentId : union) {
+				results.add(this.indexHandler.getIdsToTitles().get(documentId));
 			}
 		} else if (query.contains(SearchEngineRetrEvil.BUT_NOT)) {
-			int index = Arrays.asList(terms).indexOf(SearchEngineRetrEvil.BUT_NOT);
+			int index = Arrays.asList(terms).indexOf(SearchEngineRetrEvil.BUT.trim());
 			String leftProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index - 1)).get(0);
 			String rightProcessedTerm = processBooleanQuery(Arrays.asList(terms).get(index + 1)).get(0);
 			
 			Index.TermList leftTermList = this.indexHandler.readListForTerm(leftProcessedTerm);
 			Index.TermList rightTermList = this.indexHandler.readListForTerm(rightProcessedTerm);
-			for (Long document : leftTermList.getOccurrences().keySet()) {
-				if (!rightTermList.getOccurrences().containsKey(document)) {
-					results.add(this.indexHandler.getIdsToTitles().get(document));
-				}
+			
+			Set<Long> leftSet = leftTermList.getOccurrences().keySet();
+			Set<Long> rightSet = rightTermList.getOccurrences().keySet();
+			Set<Long> difference = new TreeSet<Long>(leftSet);
+			difference.removeAll(rightSet);
+
+			for (Long documentId : difference) {
+				results.add(this.indexHandler.getIdsToTitles().get(documentId));
 			}
 		} else {
 			try {
@@ -338,7 +385,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		// get the IDs of documents linking to the title
 		List<Long> documentIds = new ArrayList<Long>();
 		if (titleList != null) {
-			for (String listedTitle : titleList.getTitles()) {
+			// sort titles (TreeSet automatically uses natural ordering)
+			TreeSet<String> sortedTitles = new TreeSet<String>(titleList.getTitles());
+			
+			for (String listedTitle : sortedTitles) {
 				// listedTitle is the pre-processed title, need the document ID
 				Long documentId = this.indexHandler.getTitlesToIds().get(listedTitle);
 				if (documentId != null && !documentIds.contains(documentId)) {
@@ -372,43 +422,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 //			}
 //		}
 		return new ArrayList<String>(results);
-	}
-	
-	/**
-	 * This method is <tt>obsolete</tt>. Use {@link #processBM25Query(String, int)}
-	 * instead.<br>
-	 * 
-	 * Process the query as a simple keyword query, i.e., pre-process it and
-	 * treat every term as a search term which must be present.
-	 * @param query the query text
-	 * @return a list of titles of relevant documents
-	 */
-	@SuppressWarnings("unused")
-	private ArrayList<String> processKeywordQuery(String query) {
-		// prepare array of titles
-		ArrayList<String> titles = new ArrayList<String>();
-		
-		try {
-			// pre-process the query
-			List<String> terms = this.indexHandler.processRawText(query);
-			
-			// find occurrences of the keyword (if there is any)
-			Index.TermList termList = terms.size() > 0 
-					? this.indexHandler.readListForTerm(terms.get(0)) 
-					: null;
-			
-			// get document titles for the document id(s)
-			Set<Long> documentIds = termList.getOccurrences().keySet();
-			for (Long documentId : documentIds) {
-				String title = this.indexHandler.getIdsToTitles().get(documentId);
-				titles.add(title != null ? title : "- title for id " + documentId + " -");
-			}
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
-		
-		// return the titles
-		return titles;
 	}
 	
 	/**
@@ -662,84 +675,37 @@ public class SearchEngineRetrEvil extends SearchEngine {
 
 		return result;
 	}
-
-	/**
-	 * Compute the Normalized Discounted Cumulative Gain for the given ranking
-	 * and ideal ranking at the given position.<br>
-	 * 
-	 * Relevance: assume binary relevance, i.e., all documents in the goldRanking
-	 * are relevant and documents in the actual ranking are relevant if and only
-	 * if they are also listed in the goldRanking.
-	 * @param goldRanking the ideal ranking of document titles
-	 * @param myRanking the actual ranking of document titles
-	 * @param at the rank for which the value is to be computed, counting
-	 *   from 1 (highest ranking document), or <tt>null</tt> if an argument is
-	 *   invalid (i.e., at < 1 or goldRanking or myRanking are <tt>null</tt> or 
-	 *   empty); the actual rank which is used is min{at, goldRanking.size, myRanking.size}
-	 */
+	
 	@Override
-	Double computeNdcg(ArrayList<String> goldRanking, ArrayList<String> myRanking, int at) {
-		// catch invalid arguments
-		if (goldRanking == null || goldRanking.size() == 0 
-				|| myRanking == null || myRanking.size() == 0
-				|| at < 1) {
-			return null;
+	Double computeNdcg(ArrayList<String> goldRanking, ArrayList<String> ranking, int at) {
+		double dcg = 0.0;
+		double idcg = 0.0;
+		int rank = 1;
+
+		Iterator<String> iter = ranking.iterator();
+		while (rank <= at) {
+			if (rank == 1) {
+				idcg += 1 + Math.floor(10 * Math.pow(0.5, 0.1 * rank));
+			} else {
+				idcg += 1 + Math.floor(10 * Math.pow(0.5, 0.1 * rank)) / Math.log(rank);
+			}
+			if (iter.hasNext()) {
+				String title = this.getTitleFromQueryAnswer(iter.next());
+				int origRank = goldRanking.indexOf(title) + 1;
+				if (origRank < 1) {
+					rank++;
+					continue;
+				} else if (rank == 1) {
+					dcg += 1 + Math.floor(10 * Math.pow(0.5, 0.1 * origRank));
+					rank++;
+					continue;
+				} else {
+					dcg += 1 + Math.floor(10 * Math.pow(0.5, 0.1 *origRank)) / Math.log(rank);
+				}
+			}
+			rank++;
 		}
-		at = Math.min(Math.min(goldRanking.size(), myRanking.size()), at);
-		
-		// create list of relevance values for the actual ranking
-		double[] actualRelevance = new double[at];	// up to the desired rank
-		for (int i = 0; i < at; i++) {
-			/* 
-			 * assume binary relevance where a document is relevant if and only
-			 * if it is in the ideal ranking, regardless of position
-			 */
-			actualRelevance[i] = goldRanking.contains(myRanking.get(i)) ? 1.0 : 0.0;
-		}
-		
-		// create list of relevance values for the ideal ranking
-		double[] idealRelevance = new double[at];	// up to the desired rank
-		for (int i = 0; i < at; i++) {
-			/*
-			 * assume binary relevance where every document within the ideal
-			 * ranking is relevant
-			 */
-			idealRelevance[i] = 1;
-		}
-		return ndcg(actualRelevance, idealRelevance);
-	}
-	
-	/**
-	 * Helper method which computes the Normalized Discounted Cumulative Gain
-	 * for arrays of relevance values from the actual and an ideal ranking at
-	 * the last position.
-	 * @param actualRelevance relevance values for the actual ranking
-	 * @param idealRelevance relevance values for the ideal ranking
-	 * @return the NDCG at the last position
-	 */
-	private static double ndcg(double[] actualRelevance, double[] idealRelevance) {
-		// initialize DCGs
-		double actualDcg = 0.0;
-		double idealDcg = 0.0;
-		
-		// compute the DCGs
-		for (int i = 0; i < actualRelevance.length; i++) {
-			actualDcg += (actualRelevance[i] * gain(i + 1));
-			idealDcg += (idealRelevance[i] * gain(i + 1));
-		}
-		
-		// return the NDCG
-		return actualDcg / idealDcg;
-	}
-	
-	/**
-	 * Helper method which computes the exponentially decaying gain value of
-	 * a document at the given rank.
-	 * @param rank the rank of the document, starting with 1
-	 * @return the gain value within [1, 10]
-	 */
-	private static int gain(int rank) {
-		return 1 + ((int) Math.floor(10.0 * Math.pow(0.5, 0.1 * rank)));
+		return dcg / idcg;
 	}
 	
 }

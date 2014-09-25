@@ -11,14 +11,15 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.FilenameFilter;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
+import java.util.StringTokenizer;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -32,6 +33,8 @@ import org.apache.lucene.analysis.de.GermanStemFilter;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.util.CharArraySet;
 import org.apache.lucene.util.Version;
+
+import de.hpi.krestel.mySearchEngine.LinkIndex.TitleList;
 
 /**
  * Handles everything related to the index. Deals with related I/O.
@@ -63,86 +66,8 @@ class IndexHandler {
 	private static final String fileExtension = ".txt";
 	// file extension
 	private static final String tempFileExtension = ".tmp";
-
 	// extended stopword list 
-	private static final HashSet<String> GERMAN_STOP_WORDS = new HashSet<String>(
-			Arrays.asList(new String[] { "a", "ab", "aber", "ach", "acht", "achte",
-					"achten", "achter", "achtes", "ag", "alle", "allein", "allem", 
-					"allen", "aller", "allerdings", "alles", "allgemeinen", "als", 
-					"also", "am", "an", "and", "andere", "anderen", "andern", "anders", 
-					"au", "auch", "auf", "aus", "ausser", "ausserdem", "b", "bald", 
-					"bei", "beide", "beiden", "beim", "beispiel", "bekannt", "bereits", 
-					"besonders", "besser", "besten", "bin", "bis", "bisher", "bist", 
-					"c", "d", "d.h", "da", "dabei", "dadurch", "dafür", "dagegen", 
-					"daher", "dahin", "dahinter", "damals", "damit", "danach", "daneben", 
-					"dank", "dann", "daran", "darauf", "daraus", "darf", "darfst", "darin", 
-					"darüber", "darum", "darunter", "das", "dasein", "daselbst", "dass", 
-					"dasselbe", "davon", "davor", "dazu", "dazwischen", "dein", "deine", 
-					"deinem", "deiner", "dem", "dementsprechend", "demgegenüber", 
-					"demgemäss", "demselben", "demzufolge", "den", "denen", "denn", 
-					"denselben", "der", "deren", "derjenige", "derjenigen", "dermassen", 
-					"derselbe", "derselben", "des", "deshalb", "desselben", "dessen", 
-					"deswegen", "dich", "die", "diejenige", "diejenigen", "dies", "diese", 
-					"dieselbe", "dieselben", "diesem", "diesen", "dieser", "dieses", "dir", 
-					"doch", "dort", "drei", "drin", "dritte", "dritten", "dritter", "drittes", 
-					"du", "durch", "durchaus", "dürfen", "dürft", "durfte", "durften", 
-					"e", "eben", "ebenso", "ehrlich", "ei", "ei,", "eigen", "eigene", "eigenen", 
-					"eigener", "eigenes", "ein", "einander", "eine", "einem", "einen", "einer", 
-					"eines", "einige", "einigen", "einiger", "einiges", "einmal", "eins", 
-					"elf", "en", "ende", "endlich", "entweder", "er", "Ernst", "erst", 
-					"erste", "ersten", "erster", "erstes", "es", "etwa", "etwas", "euch", 
-					"euer", "euers", "eurem", "f", "früher", "fünf", "fünfte", "fünften", 
-					"fünfter", "fünftes", "für", "g", "gab", "ganz", "ganze", "ganzen", 
-					"ganzer", "ganzes", "gar", "gedurft", "gegen", "gegenüber", "gehabt", 
-					"gehen", "geht", "gekannt", "gekonnt", "gemacht", "gemocht", "gemusst", 
-					"genug", "gerade", "gern", "gesagt", "geschweige", "gewesen", "gewollt", 
-					"geworden", "gibt", "ging", "gleich", "gott", "gross", "grosse", 
-					"grossen", "grosser", "grosses", "gut", "gute", "guter", "gutes", 
-					"h", "habe", "haben", "habt", "hast", "hat", "hatte", "hätte", 
-					"hatten", "hätten", "heisst", "her", "heute", "hier", "hin", "hinter",
-					"hoch", "i", "ich", "ihm", "ihn", "ihnen", "ihr", "ihre", "ihrem", 
-					"ihren", "ihrer", "ihres", "im", "immer", "in", "indem", "infolgedessen", 
-					"ins", "irgend", "ist", "j", "ja", "jahr", "jahre", "jahren", "je", 
-					"jede", "jedem", "jeden", "jeder", "jedermann", "jedermanns", "jedoch", 
-					"jemand", "jemandem", "jemanden", "jene", "jenem", "jenen", "jener", 
-					"jenes", "jetzt", "k", "kam", "kann", "kannst", "kaum", "kein", "keine", 
-					"keinem", "keinen", "keiner", "kleine", "kleinen", "kleiner", "kleines", 
-					"kommen", "kommt", "können", "könnt", "konnte", "könnte", "konnten", 
-					"kurz", "l", "lang", "lange", "leicht", "leide", "lieber", "los", 
-					"m", "machen", "macht", "machte", "mag", "magst", "mahn", "man", 
-					"manche", "manchem", "manchen", "mancher", "manches", "mann", "mehr", 
-					"mein", "meine", "meinem", "meinen", "meiner", "meines", "mensch", 
-					"menschen", "mich", "mir", "mit", "mittel", "mochte", "möchte", 
-					"mochten", "mögen", "möglich", "mögt", "morgen", "muss", "müssen", 
-					"musst", "müsst", "musste", "mussten", "n", "na", "nach", "nachdem", 
-					"nahm", "natürlich", "neben", "nein", "neue", "neuen", "neun", "neunte", 
-					"neunten", "neunter", "neuntes", "nicht", "nichts", "nie", "niemand", 
-					"niemandem", "niemanden", "noch", "nun", "nur", "o", "ob", "oben", "oder", 
-					"of", "offen", "oft", "ohne", "Ordnung", "p", "q", "r", "recht", "rechte", 
-					"rechten", "rechter", "rechtes", "richtig", "rund", "s", "sa", "sache", 
-					"sagt", "sagte", "sah", "satt", "schlecht", "Schluss", "schon", "sechs", 
-					"sechste", "sechsten", "sechster", "sechstes", "sehr", "sei", "seid", 
-					"seien", "sein", "seine", "seinem", "seinen", "seiner", "seines", "seit", 
-					"seitdem", "selbst", "sich", "sie", "sieben", "siebente", "siebenten", 
-					"siebenter", "siebentes", "sind", "so", "solang", "solche", "solchem", 
-					"solchen", "solcher", "solches", "soll", "sollen", "sollte", "sollten", 
-					"sondern", "sonst", "sowie", "später", "statt", "t", "tag", "tage", "tagen", 
-					"tat", "teil", "tel", "the", "to", "tritt", "trotzdem", "tun", "u", 
-					"über", "überhaupt", "übrigens", "uhr", "um", "und", "und?", "uns", 
-					"unser", "unsere", "unserem", "unserer", "unsers", "unter", "v", "vergangenen", 
-					"viel", "viele", "vielem", "vielen", "vielleicht", "vier", "vierte", 
-					"vierten", "vierter", "viertes", "vom", "von", "vor", "w", "wahr?", 
-					"während", "währenddem", "währenddessen", "wann", "war", "wäre", "waren", 
-					"wart", "warum", "was", "wegen", "weil", "weit", "weiter", "weitere", 
-					"weiteren", "weiteres", "welche", "welchem", "welchen", "welcher", 
-					"welches", "wem", "wen", "wenig", "wenige", "weniger", "weniges", 
-					"wenigstens", "wenn", "wer", "werde", "werden", "werdet", "wessen", 
-					"wie", "wieder", "will", "willst", "wir", "wird", "wirklich", "wirst", 
-					"wo", "wohl", "wollen", "wollt", "wollte", "wollten", "worden", "wurde", 
-					"würde", "wurden", "würden", "x", "y", "z", "z.b", "zehn", "zehnte", 
-					"zehnten", "zehnter", "zehntes", "zeit", "zu", "zuerst", "zugleich", 
-					"zum", "zunächst", "zur", "zurück", "zusammen", "zwanzig", "zwar", 
-					"zwei", "zweite", "zweiten", "zweiter", "zweites", "zwischen", "zwölf" }));
+	private static final String germanStopWordsFileName = "/GermanStopWords.csv";
 
 	/*
 	 * Insertion-ordered map of regular expressions which are used to remove
@@ -193,7 +118,9 @@ class IndexHandler {
 		linkingPatterns.add(Pattern.compile("\\[http://de\\.wikipedia\\.org/wiki/([^ :#\\]]+)[^\\]]*\\]"));
 	}
 
-	private static int THRESHOLD = 160 * 1024 * 1024;
+//	private static int THRESHOLD = 160 * 1024 * 1024;
+	private static int THRESHOLD = 160 * 64;
+	private static int bufferSize = 8192;
 	private int byteCounter = 0;
 
 	// directory of files to be read / written
@@ -219,6 +146,7 @@ class IndexHandler {
 	private Map<String, Long> titlesToIds;
 	// the RandomAccessFile where the index will be written to
 	private File indexFile;
+	private File linkIndexFile;
 	private RandomAccessFile raIndexFile;
 	private FileOutputStream fos;
 	private BufferedOutputStream bo;
@@ -290,6 +218,20 @@ class IndexHandler {
 		 */
 		Version version = Version.LUCENE_47;	// newest version
 
+		InputStreamReader r = new InputStreamReader(this.getClass().getResourceAsStream(IndexHandler.germanStopWordsFileName));
+		BufferedReader buffRead = new BufferedReader(r);
+		String stopWordLine = "";
+		try {
+			stopWordLine = buffRead.readLine();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		
+		HashSet<String> stopWords = new HashSet<String>();
+		StringTokenizer st = new StringTokenizer(stopWordLine, ",");
+        while (st.hasMoreTokens())
+            stopWords.add(st.nextToken());
+		
 		/* 
 		 * Create and return the analyzer with the given compatibility version.
 		 * As of version 3.1, Snowball stopwords are used per default (can
@@ -298,7 +240,7 @@ class IndexHandler {
 		 * so we might replace these characters (or all UTF-8 characters which
 		 * are not ASCII in general) with some other representation.
 		 */
-		Analyzer analyzer = new GermanAnalyzer(version, CharArraySet.copy(version, GERMAN_STOP_WORDS));
+		Analyzer analyzer = new GermanAnalyzer(version, CharArraySet.copy(version, stopWords));
 
 		return analyzer;
 	}
@@ -364,7 +306,7 @@ class IndexHandler {
 			for (String linkedTitle : linkedDocumentTitles) {
 				if (linkedTitle != null && linkedTitle.length() > 0) {
 					// add linking to the linkIndex
-					this.getLinkIndex().addLinkingTitle(linkedTitle, title);
+					this.getLinkIndex().addLinkingTitle(title, linkedTitle);
 					// if threshold is reached: write part of the index
 					this.byteCounter += (title.length() + linkedTitle.length());
 					if (this.byteCounter >= THRESHOLD) {
@@ -408,7 +350,7 @@ class IndexHandler {
 			this.textsSeeklist.put(id, raTextsFile.getFilePointer());
 
 			// write clean text of the document to the file (2 bytes per char)
-			raTextsFile.writeChars(cleanPageText(text));;
+			raTextsFile.write(cleanPageText(text).getBytes());
 
 			// close the file
 			raTextsFile.close();
@@ -472,14 +414,19 @@ class IndexHandler {
 				+ "_"
 				+ this.fileCount
 				+ IndexHandler.tempFileExtension);
-
+		
+		this.linkIndexFile = new File(this.dir
+				+ IndexHandler.linkIndexFileName
+				+ "_"
+				+ this.fileCount
+				+ IndexHandler.tempFileExtension);
 		try {
 			/*
 			 * write part of index
 			 */				
 			this.raIndexFile = new RandomAccessFile(indexFile, "rw");
 			this.fos = new FileOutputStream(raIndexFile.getFD());
-			this.bo = new BufferedOutputStream(fos, 8192);
+			this.bo = new BufferedOutputStream(fos, IndexHandler.bufferSize);
 
 			// get map of terms and their occurrence lists
 			Map<String, Index.TermList> termLists = this.index.getTermLists();
@@ -488,22 +435,34 @@ class IndexHandler {
 				// write the list using custom toIndexString method of TermList
 				termLists.get(term).toIndexString(this.bo, term, true);
 			}
-
-			this.fileCount++;
 			this.bo.close();
 			this.fos.close();
 
 			/*
 			 * write part of link index
 			 * 
-			 * TODO: implement; I did not implement splitting / merging
 			 */
+			this.raIndexFile = new RandomAccessFile(this.linkIndexFile, "rw");
+			this.fos = new FileOutputStream(this.raIndexFile.getFD());
+			this.bo = new BufferedOutputStream(this.fos, IndexHandler.bufferSize);
 
+			// get map of terms and their occurrence lists
+			Map<String, TitleList> titleLists = this.linkIndex.getTitleLists();
+			// write each occurrence list to the file
+			for (String title : titleLists.keySet()) {	// uses iterator
+				// write the list using custom toIndexString method of TermList
+				titleLists.get(title).toIndexString(this.bo);
+			}
+			this.bo.close();
+			this.fos.close();
+
+			this.fileCount++;
 		} catch(IOException e) {
 			e.printStackTrace();
 		}
 
 		this.index = new Index();
+		this.linkIndex = new LinkIndex();
 	}
 
 	/**
@@ -514,7 +473,6 @@ class IndexHandler {
 	 * titles-id-mapping to files (one file each).
 	 * If an IOException occurs, print it, but proceed.
 	 */
-	@SuppressWarnings("resource")
 	public void createIndex() {
 		try {
 			/*
@@ -525,136 +483,16 @@ class IndexHandler {
 			/*
 			 * merge index files
 			 */
-			FilenameFilter filter = new FilenameFilter() {
-				@Override
-				public boolean accept(File dir, String name) {
-					return name.endsWith(IndexHandler.tempFileExtension);
-				}
-			};
-
-			File directory = new File(this.dir);
-			this.indexFile = new File(this.dir
-					+ IndexHandler.indexFileName
-					+ IndexHandler.fileExtension);
-			this.raIndexFile = new RandomAccessFile(this.indexFile, "rw");
-			this.fos = new FileOutputStream(this.raIndexFile.getFD());
-			this.bo = new BufferedOutputStream(this.fos, 8192);
-			File[] filesInFolder = directory.listFiles(filter);
-			BufferedReader[] fileBeginnings = new BufferedReader[filesInFolder.length];
-
-			int index = 0;
-			int fileCount = filesInFolder.length;
-			String line = "";
-			String[] terms = new String[fileCount];
-			String[] lines = new String[fileCount];
-
-			/*
-			 * setup merging tools: a BufferedReader for each of the files +
-			 * read the first lines each to determine what terms to merge
-			 * - lines and terms are considered separately to allow colons, etc.
-			 * in terms
-			 */
-			for(File fileEntry : filesInFolder) {
-				FileReader reader = new FileReader(fileEntry);
-				BufferedReader breed = new BufferedReader(reader);
-				fileBeginnings[index] = breed;
-				line = breed.readLine();
-				terms[index] = new String(DatatypeConverter.parseBase64Binary(line.substring(0, line.indexOf(":"))));
-				lines[index] = line.substring(line.indexOf(":"));
-				index++;
-			}
-			String term = getLowest(terms);
-			String nextTerm = term;
-			index = 0;
-			int countDown = fileCount;
-			int winnerSlot = -1;
-			line = "";
-			/*
-			 * whenever a term is merged the next line from the file it originated from is read
-			 * this is continued until all lines in all files are read / all readers reached the end of the file
-			 * lines of files will be merged whenever a read line yields the same term  
-			 */
-			while(countDown > 0) {
-				for(index = 0; index < fileCount; index++) {
-					if (lines[index] == null) continue;
-					String currentTerm = terms[index];
-					if (term.compareTo(currentTerm) == 0) {
-						winnerSlot = index;
-						if (line.length() > 0) line += ";";
-						String toAppend = lines[index].substring(1, lines[index].lastIndexOf("."));
-						line += toAppend; 
-						String currentLine = fileBeginnings[index].readLine(); 
-						if (currentLine == null) {
-							fileBeginnings[index].close();
-							fileBeginnings[index] = null;
-							terms[index] = null;
-							lines[index] = null;
-							countDown--;
-							term = getLowest(lines);
-							term = term.substring(0, term.indexOf(":"));
-						} else {
-							terms[index] = new String(DatatypeConverter.parseBase64Binary(currentLine.substring(0, currentLine.indexOf(":"))));
-							lines[index] = currentLine.substring(currentLine.indexOf(":"));
-						}
-					} else if (term.compareTo(currentTerm) < 0 && nextTerm.compareTo(currentTerm) < 0) {
-						nextTerm = currentTerm;
-					} else {
-						continue;
-					}
-
-				}
-				this.seeklist.put(term, this.raIndexFile.getFilePointer());
-				this.bo.write(line.getBytes());
-				this.bo.write(".".getBytes());
-				line = "";
-				if (term.equals(nextTerm)) {
-					if (fileBeginnings[winnerSlot] == null) {
-						nextTerm = getLowest(terms);
-					} else {
-						String currentLine = fileBeginnings[winnerSlot].readLine(); 
-						if (currentLine == null) {
-							fileBeginnings[winnerSlot].close();
-							fileBeginnings[winnerSlot] = null;
-							lines[winnerSlot] = null;
-							terms[winnerSlot] = null;
-							countDown--;
-							nextTerm = getLowest(terms);
-						} else {
-							terms[winnerSlot] = new String(DatatypeConverter.parseBase64Binary(currentLine.substring(0, currentLine.indexOf(":"))));
-							lines[winnerSlot] = currentLine.substring(currentLine.indexOf(":"));
-							nextTerm = terms[winnerSlot];
-						}
-					}
-					winnerSlot = -1;
-				}
-				term = nextTerm;
-			}
-			this.bo.close();	
-			this.fos.close();
-			this.raIndexFile.close();
+			mergeTempFilesIntoFile(IndexHandler.indexFileName, true);
 
 			/*
 			 * merge link index files
-			 * 
-			 * TODO: implement; I am just writing the whole list here
 			 */
+			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
 
-			try {
-				File linkIndexFile = new File(this.dir
-						+ IndexHandler.linkIndexFileName
-						+ IndexHandler.fileExtension);
-				this.raIndexFile = new RandomAccessFile(linkIndexFile, "rw");
-				this.fos = new FileOutputStream(raIndexFile.getFD());
-				this.bo = new BufferedOutputStream(fos);
-
-				for (String key : this.getLinkIndex().getTitleLists().keySet()) {
-					this.getLinkIndex().getTitleLists().get(key).toIndexString(bo);
-				}
-
-				raIndexFile.close();
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
+//			for (String key : this.getLinkIndex().getTitleLists().keySet()) {
+//				this.getLinkIndex().getTitleLists().get(key).toIndexString(bo);
+//			}
 
 			/*
 			 * write the seeklist to a file - would be too big to stringify first
@@ -688,6 +526,151 @@ class IndexHandler {
 		}
 	}
 
+	private void mergeTempFilesIntoFile(final String fileName, boolean base64Encoded) throws IOException {
+		FilenameFilter filter = new FilenameFilter() {
+			@Override
+			public boolean accept(File dir, String name) {
+				return name.startsWith(fileName) && name.endsWith(IndexHandler.tempFileExtension);
+			}
+		};
+
+		File directory = new File(this.dir);
+		File leFile = new File(this.dir
+				+ fileName
+				+ IndexHandler.fileExtension);
+		this.raIndexFile = new RandomAccessFile(leFile, "rw");
+		this.fos = new FileOutputStream(this.raIndexFile.getFD());
+		this.bo = new BufferedOutputStream(this.fos, IndexHandler.bufferSize);
+		File[] filesInFolder = directory.listFiles(filter);
+		int fileCount = filesInFolder.length;
+
+		BufferedReader[] fileBeginnings = new BufferedReader[fileCount];
+		
+		String[] terms = new String[fileCount];
+		String[] lines = new String[fileCount];
+
+		setupMergingToolsForTempFiles(filesInFolder, fileBeginnings, terms, lines, base64Encoded);
+		
+		String term = getLowest(terms);
+		String nextTerm = term;
+		int index = 0;
+		int countDown = fileCount;
+		int winnerSlot = -1;
+		String line = "";
+		/*
+		 * whenever a term is merged the next line from the file it originated from is read
+		 * this is continued until all lines in all files are read / all readers reached the end of the file
+		 * lines of files will be merged whenever a read line yields the same term  
+		 */
+		while(countDown > 0) {
+			for(index = 0; index < fileCount; index++) {
+				if (lines[index] == null) continue;
+				String currentTerm = terms[index];
+				if (term.compareTo(currentTerm) == 0) {
+					winnerSlot = index;
+					if (line.length() > 0) line += ";";
+					String toAppend = lines[index].substring(1, lines[index].lastIndexOf("."));
+					line += toAppend; 
+					String currentLine = fileBeginnings[index].readLine(); 
+					if (currentLine == null || currentLine.trim().isEmpty()) {
+						fileBeginnings[index].close();
+						fileBeginnings[index] = null;
+						terms[index] = null;
+						lines[index] = null;
+						countDown--;
+						if (fileName.equals(IndexHandler.indexFileName)) {
+							term = getLowest(lines);
+							System.out.println("currentTerm: " + term + " to file: " + fileName);
+							term = term.substring(0, term.indexOf(":"));
+						} else
+							term = getLowest(terms);
+						if (term.isEmpty()) {
+							term = currentTerm;
+							continue;
+						}
+						
+					} else {
+						terms[index] = conditionalBase64Converter(currentLine, base64Encoded);
+//						System.out.println("currentLine: " + currentLine);
+						lines[index] = currentLine.substring(currentLine.indexOf(":"));
+					}
+				} else if (term.compareTo(currentTerm) < 0 && nextTerm.compareTo(currentTerm) < 0) {
+					nextTerm = currentTerm;
+				} else {
+					continue;
+				}
+			}
+			if (fileName.equals(IndexHandler.indexFileName))
+				this.seeklist.put(term, this.raIndexFile.getFilePointer());
+			if (fileName.equals(IndexHandler.linkIndexFileName)) {
+				this.bo.write(term.getBytes());
+				this.bo.write(TitleList.colon);
+			}
+			this.bo.write(line.getBytes());
+			this.bo.write(TitleList.dot);
+			if (term.equals(nextTerm)) {
+				if (fileBeginnings[winnerSlot] == null) {
+					nextTerm = getLowest(terms);
+				} else {
+					String currentLine = fileBeginnings[winnerSlot].readLine(); 
+					if (currentLine == null || currentLine.trim().isEmpty()) {
+						fileBeginnings[winnerSlot].close();
+						fileBeginnings[winnerSlot] = null;
+						lines[winnerSlot] = null;
+						terms[winnerSlot] = null;
+						countDown--;
+						nextTerm = getLowest(terms);
+					} else {
+						terms[winnerSlot] = conditionalBase64Converter(currentLine, base64Encoded);
+//						System.out.println("winnerLine: " + currentLine);
+						lines[winnerSlot] = currentLine.substring(currentLine.indexOf(":"));
+						nextTerm = terms[winnerSlot];
+					}
+				}
+				winnerSlot = -1;
+			}
+			term = nextTerm;
+			line = "";
+			this.bo.flush();
+			this.fos.flush();
+		}
+		this.bo.flush();
+		this.fos.flush();
+		this.bo.close();	
+		this.fos.close();
+		this.raIndexFile.close();
+	}
+
+	private void setupMergingToolsForTempFiles(File[] filesInFolder, BufferedReader[] fileBeginnings, String[] terms, String[] lines, boolean base64Encoded) throws FileNotFoundException, IOException {
+		int index = 0;
+		String line = "";
+		/*
+		 * setup merging tools: a BufferedReader for each of the files +
+		 * read the first lines each to determine what terms to merge
+		 * - lines and terms are considered separately to allow colons, etc.
+		 * in terms
+		 */
+		for(File fileEntry : filesInFolder) {
+			FileReader reader = new FileReader(fileEntry);
+			BufferedReader breed = new BufferedReader(reader);
+			fileBeginnings[index] = breed;
+			line = breed.readLine();
+			if (line == null) {
+				breed.close();
+				fileBeginnings[index] = null;
+			} else {
+				terms[index] = conditionalBase64Converter(line, base64Encoded);
+				lines[index] = line.substring(line.indexOf(":"));
+			}
+			index++;
+		}
+	}
+	
+	private String conditionalBase64Converter(String content, boolean conversionRequired) {
+		String interestingPart = content.substring(0, content.indexOf(":"));
+		return conversionRequired ? new String(DatatypeConverter.parseBase64Binary(interestingPart)) : interestingPart;
+	}
+	
 	// find the lexicographically lowest in a collection of Strings
 	private String getLowest(String[] lines) {
 		String lowest = "";
@@ -706,7 +689,7 @@ class IndexHandler {
 
 	private void writeStringifiedToFile(String content, String filename) throws IOException {
 		FileWriter fos = new FileWriter(filename);
-		BufferedWriter bo = new BufferedWriter(fos, 8192);
+		BufferedWriter bo = new BufferedWriter(fos, IndexHandler.bufferSize);
 		bo.write(content);
 
 		bo.close();
@@ -740,7 +723,7 @@ class IndexHandler {
 	private String seekListToFile(String filename) {
 		try {
 			FileWriter fos = new FileWriter(filename);
-			BufferedWriter bo = new BufferedWriter(fos, 8192);
+			BufferedWriter bo = new BufferedWriter(fos, IndexHandler.bufferSize);
 			for (String term : this.seeklist.keySet()) {	// uses iterator
 				bo.write(term);
 				bo.write('\t');

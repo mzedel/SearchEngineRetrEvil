@@ -1,7 +1,5 @@
 package de.hpi.krestel.mySearchEngine;
 
-import de.hpi.krestel.mySearchEngine.Index;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -129,7 +127,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		String dumpFile = new File(dir).getParent() + "/" + "deWikipediaDump.xml";
 		if (IndexHandler.DEV_MODE)
 			dumpFile = new File(dir).getParent() + "/" + "testDump.xml";
-
 		/* 
 		 * create the indexer with the target dir; this instance is only used for
 		 * creating the index, not for answering queries
@@ -141,9 +138,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			indexer.createIndex();
 		try {
 			// get the SAX parser with the appropriate handler
-			SAXParser saxParser = SAXParserFactory.newInstance().newSAXParser();
+			SAXParser saxParser = SAXParserFactory.newInstance().newSAXParser();			
 			DefaultHandler saxHandler = new SAXHandler(this, indexer);
-			
+
 			// parse the dump (UTF-8)
 			InputStream inputStream = new FileInputStream(dumpFile);
 			Reader reader = new InputStreamReader(inputStream,"UTF-8");

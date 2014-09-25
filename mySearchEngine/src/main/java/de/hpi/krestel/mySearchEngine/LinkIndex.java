@@ -11,10 +11,11 @@ import java.util.TreeSet;
 class LinkIndex {
 
 	public static class TitleList {
-		
-		private static final byte[] colon = ":".getBytes();
-		private static final byte[] comma = ",".getBytes();
-		private static final byte[] dot = ".".getBytes();
+
+		public static final byte[] semi = ";".getBytes();
+		public static final byte[] colon = ":".getBytes();
+		public static final byte[] comma = ",".getBytes();
+		public static final byte[] dot = ".".getBytes();
 		
 		String title;
 		private Collection<String> titles;
@@ -66,16 +67,15 @@ class LinkIndex {
 			// write title
 			bo.write(title.getBytes());
 			bo.write(colon);
-			
 			// write other titles
 			boolean isFirstTitle = true;
-			for (String title : titles) {
+			for (String titre : titles) {
 				if (!isFirstTitle) {
 					bo.write(comma);
 				} else {
 					isFirstTitle = false;
 				}
-				bo.write(title.getBytes());
+				bo.write(titre.getBytes());
 			}
 			
 			// finish

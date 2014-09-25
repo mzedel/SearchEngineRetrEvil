@@ -10,6 +10,8 @@ import java.util.TreeSet;
 
 import javax.xml.bind.DatatypeConverter;
 
+import de.hpi.krestel.mySearchEngine.LinkIndex.TitleList;
+
 /**
  * An Index holds a map which maps terms to TermLists (which hold the
  * occurrences of that term in documents).
@@ -47,10 +49,6 @@ class Index {
 		 * over the elements via {@link Collection#iterator()}.
 		 */
 		private Map<Long, Collection<Integer>> occurrences;
-		private static final byte[] semi = ";".getBytes();
-		private static final byte[] colon = ":".getBytes();
-		private static final byte[] comma = ",".getBytes();
-		private static final byte[] dot = ".".getBytes();
 		
 		/**
 		 * Create a new TermList.
@@ -177,23 +175,23 @@ class Index {
 				if (isFirstOccurence && isIndexing) {
 					// encode term as base64 to avoid .,-: etc...
 					bo.write(DatatypeConverter.printBase64Binary(term.getBytes()).getBytes());
-					bo.write(Index.TermList.colon);
+					bo.write(TitleList.colon);
 				}
-				if (!isFirstOccurence) bo.write(Index.TermList.semi);
+				if (!isFirstOccurence) bo.write(TitleList.semi);
 				bo.write(documentId.toString().getBytes());
-				bo.write(Index.TermList.colon);
+				bo.write(TitleList.colon);
 				Collection<Integer> positions = this.occurrences.get(documentId);
 				if (positions != null) {
 					isFirstPosition = true;
 					for (Integer position : positions) {	// uses iterator
-						if (!isFirstPosition) bo.write(Index.TermList.comma);
+						if (!isFirstPosition) bo.write(TitleList.comma);
 						bo.write(position.toString().getBytes());
 						isFirstPosition = false;
 					}
 				}
 				isFirstOccurence = false;
 			}
-			bo.write(Index.TermList.dot);
+			bo.write(TitleList.dot);
 			if (isIndexing) bo.write("\n".getBytes());
 			bo.flush();
 		}

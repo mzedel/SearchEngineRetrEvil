@@ -488,12 +488,10 @@ class IndexHandler {
 			/*
 			 * merge link index files
 			 */
-//			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
+			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
 
-//			for (String key : this.getLinkIndex().getTitleLists().keySet()) {
-//				this.getLinkIndex().getTitleLists().get(key).toIndexString(bo);
-//			}
-
+			deleteTemporaryFiles();
+			
 			/*
 			 * write the seeklist to a file - would be too big to stringify first
 			 */
@@ -524,6 +522,19 @@ class IndexHandler {
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
+	}
+
+	private void deleteTemporaryFiles() {
+		FilenameFilter filter = new FilenameFilter() {
+			@Override
+			public boolean accept(File dir, String name) {
+				return name.endsWith(IndexHandler.tempFileExtension);
+			}
+		};
+
+		File directory = new File(this.dir);
+		File[] filesInFolder = directory.listFiles(filter);
+		for (File file : filesInFolder) file.delete();
 	}
 
 	private void mergeTempFilesIntoFile(final String fileName, boolean base64Encoded) throws IOException {
@@ -581,14 +592,12 @@ class IndexHandler {
 						if (fileName.equals(IndexHandler.indexFileName)) {
 							term = getLowest(lines);
 							if (term.isEmpty()) continue;
-							System.out.println("currentTerm: " + term + " to file: " + fileName);
 							term = term.substring(0, term.indexOf(":"));
 						} else
 							term = getLowest(terms);
 						
 					} else {
 						terms[index] = conditionalBase64Converter(currentLine, base64Encoded);
-//						System.out.println("currentLine: " + currentLine);
 						lines[index] = currentLine.substring(currentLine.indexOf(":"));
 					}
 				} else if (term.compareTo(currentTerm) < 0 && nextTerm.compareTo(currentTerm) < 0) {
@@ -597,6 +606,7 @@ class IndexHandler {
 					continue;
 				}
 			}
+			if (term.isEmpty()) break;
 			if (fileName.equals(IndexHandler.indexFileName))
 				this.bo.flush(); this.fos.flush();
 				this.seeklist.put(term, this.raIndexFile.getFilePointer());
@@ -607,6 +617,7 @@ class IndexHandler {
 			this.bo.write(line.getBytes());
 			this.bo.write(TitleList.dot);
 			if (term.equals(nextTerm)) {
+				if (winnerSlot == -1) break;
 				if (fileBeginnings[winnerSlot] == null) {
 					nextTerm = getLowest(terms);
 				} else {

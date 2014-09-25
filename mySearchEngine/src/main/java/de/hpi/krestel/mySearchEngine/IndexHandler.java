@@ -577,13 +577,17 @@ class IndexHandler {
 						terms[index] = null;
 						lines[index] = null;
 						countDown--;
-						term = getLowest(lines);
+						if (fileName.equals(IndexHandler.indexFileName)) {
+							term = getLowest(lines);
+							System.out.println("currentTerm: " + term + " to file: " + fileName);
+							term = term.substring(0, term.indexOf(":"));
+						} else
+							term = getLowest(terms);
 						if (term.isEmpty()) {
 							term = currentTerm;
 							continue;
 						}
-						System.out.println("currentTerm: " + term + " to file: " + fileName);
-						term = term.substring(0, term.indexOf(":"));
+						
 					} else {
 						terms[index] = conditionalBase64Converter(currentLine, base64Encoded);
 //						System.out.println("currentLine: " + currentLine);
@@ -595,7 +599,7 @@ class IndexHandler {
 					continue;
 				}
 			}
-			if (IndexHandler.indexFileName.equals(fileName))
+			if (fileName.equals(IndexHandler.indexFileName))
 				this.seeklist.put(term, this.raIndexFile.getFilePointer());
 			if (fileName.equals(IndexHandler.linkIndexFileName)) {
 				this.bo.write(term.getBytes());

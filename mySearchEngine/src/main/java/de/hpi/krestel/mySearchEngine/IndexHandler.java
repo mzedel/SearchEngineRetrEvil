@@ -306,7 +306,7 @@ class IndexHandler {
 			for (String linkedTitle : linkedDocumentTitles) {
 				if (linkedTitle != null && linkedTitle.length() > 0) {
 					// add linking to the linkIndex
-					this.getLinkIndex().addLinkingTitle(title, linkedTitle);
+					this.getLinkIndex().addLinkingTitle(linkedTitle, title);
 					// if threshold is reached: write part of the index
 					this.byteCounter += (title.length() + linkedTitle.length());
 					if (this.byteCounter >= THRESHOLD) {
@@ -488,12 +488,10 @@ class IndexHandler {
 			/*
 			 * merge link index files
 			 */
-//			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
+			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
 
-//			for (String key : this.getLinkIndex().getTitleLists().keySet()) {
-//				this.getLinkIndex().getTitleLists().get(key).toIndexString(bo);
-//			}
-
+			deleteTemporaryFiles();
+			
 			/*
 			 * write the seeklist to a file - would be too big to stringify first
 			 */
@@ -521,9 +519,23 @@ class IndexHandler {
 			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
 					+ IndexHandler.titlesToIdsFileName 
 					+ IndexHandler.fileExtension);
+
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
+	}
+
+	private void deleteTemporaryFiles() {
+		FilenameFilter filter = new FilenameFilter() {
+			@Override
+			public boolean accept(File dir, String name) {
+				return name.endsWith(IndexHandler.tempFileExtension);
+			}
+		};
+
+		File directory = new File(this.dir);
+		File[] filesInFolder = directory.listFiles(filter);
+		for (File file : filesInFolder) file.delete();
 	}
 
 	private void mergeTempFilesIntoFile(final String fileName, boolean base64Encoded) throws IOException {
@@ -567,7 +579,6 @@ class IndexHandler {
 				if (lines[index] == null) continue;
 				String currentTerm = terms[index];
 				if (term.compareTo(currentTerm) == 0) {
-					winnerSlot = index;
 					if (line.length() > 0) line += ";";
 					String toAppend = lines[index].substring(1, lines[index].lastIndexOf("."));
 					line += toAppend; 
@@ -582,32 +593,37 @@ class IndexHandler {
 							term = getLowest(lines);
 							if (term.isEmpty()) continue;
 							term = term.substring(0, term.indexOf(":"));
-						} else
+						} else {
 							term = getLowest(terms);
+							if (term.isEmpty()) term = currentTerm;
+						}
 						
 					} else {
 						terms[index] = conditionalBase64Converter(currentLine, base64Encoded);
 						lines[index] = currentLine.substring(currentLine.indexOf(":"));
+						winnerSlot = index;
 					}
 				} else if (term.compareTo(currentTerm) < 0 && nextTerm.compareTo(currentTerm) < 0) {
-					nextTerm = currentTerm;
+					nextTerm = getLowest(terms);
 				} else {
 					continue;
 				}
 			}
-			if (fileName.equals(IndexHandler.indexFileName))
+			if (term.isEmpty()) break;
+			if (fileName.equals(IndexHandler.indexFileName)) {
 				this.bo.flush(); this.fos.flush();
 				this.seeklist.put(term, this.raIndexFile.getFilePointer());
+			}
 			if (fileName.equals(IndexHandler.linkIndexFileName)) {
 				this.bo.write(term.getBytes());
 				this.bo.write(TitleList.colon);
 			}
 			this.bo.write(line.getBytes());
 			this.bo.write(TitleList.dot);
+			if (fileName.equals(IndexHandler.linkIndexFileName)) this.bo.write("\n".getBytes());
 			if (term.equals(nextTerm)) {
-				if (fileBeginnings[winnerSlot] == null) {
-					nextTerm = getLowest(terms);
-				} else {
+				if (winnerSlot == -1) break;
+				if (fileBeginnings[winnerSlot] != null) {
 					String currentLine = fileBeginnings[winnerSlot].readLine(); 
 					if (currentLine == null || currentLine.trim().isEmpty()) {
 						fileBeginnings[winnerSlot].close();
@@ -615,13 +631,12 @@ class IndexHandler {
 						lines[winnerSlot] = null;
 						terms[winnerSlot] = null;
 						countDown--;
-						nextTerm = getLowest(terms);
 					} else {
 						terms[winnerSlot] = conditionalBase64Converter(currentLine, base64Encoded);
 						lines[winnerSlot] = currentLine.substring(currentLine.indexOf(":"));
-						nextTerm = terms[winnerSlot];
 					}
 				}
+				nextTerm = getLowest(terms);
 				winnerSlot = -1;
 			}
 			term = nextTerm;
@@ -678,6 +693,7 @@ class IndexHandler {
 		for(String line : lines) {
 			if(line != null && lowest.compareTo(line) > 0)
 				lowest = line;
+			System.out.println(lines[0] + lines[1] + lines[2] + lines[3] + lines[4] + lines[5] + " lowest should be: " + lowest);
 		}
 		return lowest;
 	}

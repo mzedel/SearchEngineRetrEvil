@@ -1240,7 +1240,7 @@ class IndexHandler {
 			raTextsFile.seek(offset);
 			try {
 				while (true) {
-					String character = String.valueOf(raTextsFile.readChar());
+					String character = String.valueOf((char) raTextsFile.readByte());
 					if (character.equals("\t")) {
 						break;
 					} else {

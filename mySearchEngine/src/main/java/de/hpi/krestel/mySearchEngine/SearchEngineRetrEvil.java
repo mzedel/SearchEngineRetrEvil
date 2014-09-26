@@ -287,13 +287,26 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * @return a list of document IDs
 	 */
 	private List<Long> processPrefixQuery(String query) {
+		// extract the prefix
 		String prefix = query.trim().substring(0, query.indexOf("*"));
-		Set<Long> documentIds = new TreeSet<Long>();
+		
+		// pre-process prefix
+		prefix = prefix.toLowerCase();
+
+		// get all relevant terms
+		List<String> terms = new ArrayList<String>();
 		for (Entry<String, Long> entry : this.indexHandler.getSeeklist().entrySet()) {
 			if (entry.getKey().startsWith(prefix)) {
-				documentIds.add(entry.getValue());
+				terms.add(entry.getKey());
 			}
 		}
+		
+		// get all relevant documents
+		Set<Long> documentIds = new TreeSet<Long>();
+		for (String term : terms) {
+			documentIds.addAll(this.indexHandler.readListForTerm(term).getOccurrences().keySet());
+		}
+		
 		return new ArrayList<Long>(documentIds);
 	}
 	
@@ -528,6 +541,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					if (positions == null || !positions.contains(nextPosition)) {
 						continue startPositionsLoop;
 					}
+					nextTermIndex++;
 				}
 				documentIds.add(documentId);
 			}
@@ -544,19 +558,13 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * @return the keyword query without the extracted parts
 	 */
 	private static String extractBooleanQueryParts(String query, StringBuilder builder) {
-		// remove boolean operators components
-		query = query.replaceAll(AND, " ");
-		query = query.replaceAll(OR, " ");
-		query = query.replaceAll(BUT_NOT, " ");
-		
 		// extract components which are phrase / prefix / BUT_NOT queries
 		while (isPhraseQuery(query)) {
 			// extract leftmost phrase
 			String phrase = extractPhraseFromQuery(query);
-			builder.append(AND + "\"" + phrase + "\"");
+			builder.append(AND + "\"" + phrase.trim() + "\"");
 			query = query.replaceAll("\"" + phrase + "\"", "");
 			query = query.replaceAll("\'" + phrase + "\'", "");
-			query = query.replaceAll("  ", " ");
 		}
 		while (isPrefixQuery(query)) {
 			// extract leftmost prefix
@@ -565,9 +573,8 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				int startIndex = query.lastIndexOf(" ", endIndex);
 				startIndex = startIndex != -1 ? startIndex : 0;
 				String prefix = query.substring(startIndex, endIndex);
-				builder.append(AND + prefix + "*");
+				builder.append(AND + prefix.trim() + "*");
 				query = query.substring(0, startIndex).concat(query.substring(endIndex + 1));
-				query = query.replaceAll("  ", " ");
 			}
 		}
 		if (builder.length() >= AND.length()) {
@@ -576,6 +583,18 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		return query.trim();
+	}
+	
+	/**
+	 * Remove all boolean operators from a query.
+	 * @param query the query text
+	 * @return the cleaned query text
+	 */
+	private static String removeBooleanOperators(String query) {
+		for (String operator : BOOLEAN_OPERATORS) {
+			query = query.replaceAll(operator, " ");
+		}
+		return query;
 	}
 	
 	/**
@@ -598,25 +617,34 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 */
 	private List<Long> processKeywordQuery(String query, int topK, int prf) {
 		List<Long> result = new ArrayList<Long>();
+		String originalQuery = query;
 		
 		try {
 			/*
-			 * Remove boolean operators (if any), and extract phrase queries
+			 * Remove boolean operators (if any), pre-process the query to get
+			 * the query terms, and extract phrase queries
 			 * and prefix queries which limit the result set.
 			 */
+System.out.println("original query: " + query);
+			query = removeBooleanOperators(query);
+System.out.println("cleaned query: " + query);
+			
+			List<String> terms = this.indexHandler.processRawText(query);
+System.out.println("terms: " + java.util.Arrays.toString(terms.toArray()));
+			
 			StringBuilder booleanQueryBuilder = new StringBuilder(100);
 			query = extractBooleanQueryParts(query, booleanQueryBuilder);
+System.out.println("keyword query: " + query);
 			String booleanQuery = booleanQueryBuilder.toString();
+System.out.println("boolean query: " + booleanQuery);
 			
 			List<Long> potentialDocumentIds = null;
 			if (booleanQuery.length() > 0) {
 				// limit the result set to the set yielded by the boolean query
 				potentialDocumentIds = this.processBooleanQuery(booleanQuery);
+System.out.println("potential IDs: " + java.util.Arrays.toString(potentialDocumentIds.toArray()));
 				
 			} // else: no limitiation
-			
-			// pre-process the query to get the query terms
-			List<String> terms = this.indexHandler.processRawText(query);
 			
 			if (prf == 0) {
 				// no pseudo relevance feedback
@@ -630,7 +658,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				ArrayList<Long> ids = this.processInnerBM25Query(terms, prf, potentialDocumentIds);
 				
 				// get the snippets
-				ArrayList<String> snippets = this.createQueryAnswerForDocuments(ids, query);
+				ArrayList<String> snippets = this.createQueryAnswerForDocuments(ids, originalQuery);
 				
 				// use the snippets to expand the query
 				terms = this.expandQueryTerms(terms, snippets);
@@ -642,6 +670,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			e.printStackTrace();
 		}
 		
+System.out.println("result: " + java.util.Arrays.toString(result.toArray()));
 		return result;
 	}
 	
@@ -770,6 +799,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 						.size();								// >= 0
 				termDocumentCountMap.put(term, documentCount);
 			}
+		}
+		// if there are any, add the potential document IDs to the set
+		if (potentialDocumentIds != null) {
+			documentIds.addAll(potentialDocumentIds);
 		}
 
 		// get N (the total number of documents)

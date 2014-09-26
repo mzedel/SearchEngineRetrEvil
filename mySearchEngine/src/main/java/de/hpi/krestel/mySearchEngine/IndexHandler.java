@@ -693,7 +693,7 @@ class IndexHandler {
 		for(String line : lines) {
 			if(line != null && lowest.compareTo(line) > 0)
 				lowest = line;
-			System.out.println(lines[0] + lines[1] + lines[2] + lines[3] + lines[4] + lines[5] + " lowest should be: " + lowest);
+			// System.out.println(lines[0] + lines[1] + lines[2] + lines[3] + lines[4] + lines[5] + " lowest should be: " + lowest);
 		}
 		return lowest;
 	}

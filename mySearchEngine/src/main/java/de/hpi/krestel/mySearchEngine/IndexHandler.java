@@ -581,14 +581,12 @@ class IndexHandler {
 						if (fileName.equals(IndexHandler.indexFileName)) {
 							term = getLowest(lines);
 							if (term.isEmpty()) continue;
-							System.out.println("currentTerm: " + term + " to file: " + fileName);
 							term = term.substring(0, term.indexOf(":"));
 						} else
 							term = getLowest(terms);
 						
 					} else {
 						terms[index] = conditionalBase64Converter(currentLine, base64Encoded);
-//						System.out.println("currentLine: " + currentLine);
 						lines[index] = currentLine.substring(currentLine.indexOf(":"));
 					}
 				} else if (term.compareTo(currentTerm) < 0 && nextTerm.compareTo(currentTerm) < 0) {
@@ -620,7 +618,6 @@ class IndexHandler {
 						nextTerm = getLowest(terms);
 					} else {
 						terms[winnerSlot] = conditionalBase64Converter(currentLine, base64Encoded);
-//						System.out.println("winnerLine: " + currentLine);
 						lines[winnerSlot] = currentLine.substring(currentLine.indexOf(":"));
 						nextTerm = terms[winnerSlot];
 					}
@@ -1196,11 +1193,11 @@ class IndexHandler {
 	 * Create a snippet of the document. Look for any occurrence of a search
 	 * term and retrieve the text around that occurrence.
 	 * @param documentId the ID of the document
-	 * @param queryTerms the terms searched for
+	 * @param query the original query
 	 * @return the snippet or <tt>null</tt> if the given id is <tt>null</tt>,
 	 *   the document is not known or an error occurs
 	 */
-	public String getSnippetForDocumentId(Long documentId, List<String> queryTerms) {
+	public String getSnippetForDocumentId(Long documentId, String query) {
 		// catch unsuited arguments
 		if (documentId == null) {
 			return null;

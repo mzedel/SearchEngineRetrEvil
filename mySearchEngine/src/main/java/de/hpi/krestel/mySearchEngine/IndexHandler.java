@@ -490,31 +490,32 @@ class IndexHandler {
 			/*
 			 * write the seeklist of the texts file to a file
 			 */
-			writeStringifiedToFile(this.textsSeekListToString(), this.dir
-					+ IndexHandler.textsSeekListFileName
-					+ IndexHandler.fileExtension);
-			this.textsSeeklist = null;
-
-			/*
-			 * write the id-title-mapping to a file
-			 */
-			writeStringifiedToFile(this.titlesToString(), this.dir 
-					+ IndexHandler.titlesFileName 
-					+ IndexHandler.fileExtension);
-			this.idsToTitles = null;
-			
-			/*
-			 * write the title-id-mapping to a file
-			 */
-			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
-					+ IndexHandler.titlesToIdsFileName 
-					+ IndexHandler.fileExtension);
-			this.titlesToIds = null;
+//			writeStringifiedToFile(this.textsSeekListToString(), this.dir
+//					+ IndexHandler.textsSeekListFileName
+//					+ IndexHandler.fileExtension);
+//			this.textsSeeklist = null;
+//
+//			/*
+//			 * write the id-title-mapping to a file
+//			 */
+//			writeStringifiedToFile(this.titlesToString(), this.dir 
+//					+ IndexHandler.titlesFileName 
+//					+ IndexHandler.fileExtension);
+//			this.idsToTitles = null;
+//			
+//			/*
+//			 * write the title-id-mapping to a file
+//			 */
+//			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
+//					+ IndexHandler.titlesToIdsFileName 
+//					+ IndexHandler.fileExtension);
+//			this.titlesToIds = null;
 
 			/*
 			 * merge link index files
 			 */
 			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
+			this.linkIndex = null;
 			
 			/*
 			 * merge index files
@@ -571,7 +572,9 @@ class IndexHandler {
 		String[] terms = new String[fileCount];
 		String[] lines = new String[fileCount];
 
-		setupMergingToolsForTempFiles(filesInFolder, fileBeginnings, terms, lines, base64Encoded);
+		String[] lineBuffer = new String[fileCount];
+		
+		setupMergingToolsForTempFiles(filesInFolder, fileBeginnings, terms, lines, lineBuffer, base64Encoded);
 		
 		String term = getLowest(terms);
 //		System.out.println("null from the start: " + (term == null || term.isEmpty()));
@@ -581,6 +584,7 @@ class IndexHandler {
 		int winnerSlot = -1;
 		boolean firstLine = true;
 		String currentLine = "";
+		int termIndex = -1;
 		/*
 		 * whenever a term is merged the next line from the file it originated from is read
 		 * this is continued until all lines in all files are read / all readers reached the end of the file
@@ -606,7 +610,8 @@ class IndexHandler {
 					};
 					bo.write(lines[index].substring(1, lines[index].lastIndexOf(".")).getBytes());
 					firstLine = false;
-					currentLine = fileBeginnings[index].readLine(); 
+					currentLine = fileBeginnings[index].readLine().trim(); 
+					lineBuffer[index] = currentLine;
 					if (currentLine == null || currentLine.trim().isEmpty()) {
 						System.out.println("empty line found");
 						fileBeginnings[index].close();
@@ -625,8 +630,10 @@ class IndexHandler {
 						}
 						
 					} else {
-						terms[index] = conditionalBase64Converter(currentLine, base64Encoded);
-						lines[index] = currentLine.substring(currentLine.indexOf(":"));
+						terms[index] = conditionalBase64Converter(currentLine, base64Encoded).trim();
+						if (currentLine.contains(":"))
+							lines[index] = currentLine.substring(currentLine.indexOf(":")).trim();
+						else lines[index] = ":###.";
 						winnerSlot = index;
 					}
 				} else if (term.compareTo(currentTerm) < 0 && nextTerm.compareTo(currentTerm) < 0) {
@@ -643,7 +650,8 @@ class IndexHandler {
 			if (term.equals(nextTerm)) {
 				if (winnerSlot == -1) break;
 				if (fileBeginnings[winnerSlot] != null) {
-					currentLine = fileBeginnings[winnerSlot].readLine(); 
+					currentLine = fileBeginnings[winnerSlot].readLine().trim();
+					lineBuffer[winnerSlot] = currentLine;
 					if (currentLine == null || currentLine.trim().isEmpty()) {
 						fileBeginnings[winnerSlot].close();
 						fileBeginnings[winnerSlot] = null;
@@ -651,8 +659,8 @@ class IndexHandler {
 						terms[winnerSlot] = null;
 						countDown--;
 					} else {
-						terms[winnerSlot] = conditionalBase64Converter(currentLine, base64Encoded);
-						lines[winnerSlot] = currentLine.substring(currentLine.indexOf(":"));
+						terms[winnerSlot] = conditionalBase64Converter(currentLine, base64Encoded).trim();
+						lines[winnerSlot] = currentLine.substring(currentLine.indexOf(":")).trim();
 					}
 					currentLine = null;
 				}
@@ -667,7 +675,10 @@ class IndexHandler {
 					this.bo.write(term.getBytes());
 					this.bo.write(TitleList.colon);
 				};
-				bo.write(lines[index].substring(1, lines[index].lastIndexOf(".")).getBytes());
+				if (termIndex == -1) termIndex = getLowestIndex(lineBuffer, term);
+//				System.out.println(term + " :leterm and termIndex: " + termIndex);
+//				System.out.println("evil line: " + lines[termIndex]);
+				bo.write(lines[termIndex].substring(1, lines[termIndex].lastIndexOf(".")).getBytes());
 				this.bo.write(TitleList.dot);
 				if (!firstLine && fileName.equals(IndexHandler.linkIndexFileName)) this.bo.write("\n".getBytes());
 			}
@@ -683,7 +694,7 @@ class IndexHandler {
 		this.raIndexFile.close();
 	}
 
-	private void setupMergingToolsForTempFiles(File[] filesInFolder, BufferedReader[] fileBeginnings, String[] terms, String[] lines, boolean base64Encoded) throws FileNotFoundException, IOException {
+	private void setupMergingToolsForTempFiles(File[] filesInFolder, BufferedReader[] fileBeginnings, String[] terms, String[] lines, String[] lineBuffer, boolean base64Encoded) throws FileNotFoundException, IOException {
 		int index = 0;
 		String line = "";
 		/*
@@ -696,8 +707,9 @@ class IndexHandler {
 			FileReader reader = new FileReader(fileEntry);
 			BufferedReader breed = new BufferedReader(reader);
 			fileBeginnings[index] = breed;
-			line = breed.readLine();
-			System.out.println("line: " + line);
+			line = breed.readLine().trim();
+			lineBuffer[index] = line;
+//			System.out.println("line: " + line);
 			if (line == null || line.trim().isEmpty()) {
 				breed.close();
 				fileBeginnings[index] = null;
@@ -710,7 +722,10 @@ class IndexHandler {
 	}
 	
 	private String conditionalBase64Converter(String content, boolean conversionRequired) {
-		String interestingPart = content.substring(0, content.indexOf(":"));
+		String interestingPart = "";
+		if (content.contains("."))
+			interestingPart = content.substring(0, content.indexOf(":"));
+		else interestingPart = content;
 		content = null;
 		return conversionRequired ? new String(DatatypeConverter.parseBase64Binary(interestingPart)) : interestingPart;
 	}
@@ -726,11 +741,23 @@ class IndexHandler {
 		}
 		for(String line : lines) {
 //			System.out.println(line);
-			if(line != null && lowest.compareTo(line) > 0)
+			if(line != null && !line.isEmpty() && lowest.compareTo(line.trim()) > 0)
 				lowest = line;
 		}
 		lines = null;
-		return lowest;
+		return lowest.trim();
+	}
+	
+	private int getLowestIndex(String[] lines, String lowest) {
+		int index = 0;
+		for(String line : lines) {
+			if (line == null) continue;
+//			System.out.println(line.trim() + " ### " + lowest);
+			if(line != null && line.trim().startsWith(lowest))
+				return index;
+			index++;
+		}
+		return -1;
 	}
 
 	private void writeStringifiedToFile(String content, String filename) throws IOException {

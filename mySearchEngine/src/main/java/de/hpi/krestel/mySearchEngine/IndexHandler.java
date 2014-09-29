@@ -490,26 +490,26 @@ class IndexHandler {
 			/*
 			 * write the seeklist of the texts file to a file
 			 */
-//			writeStringifiedToFile(this.textsSeekListToString(), this.dir
-//					+ IndexHandler.textsSeekListFileName
-//					+ IndexHandler.fileExtension);
-//			this.textsSeeklist = null;
-//
-//			/*
-//			 * write the id-title-mapping to a file
-//			 */
-//			writeStringifiedToFile(this.titlesToString(), this.dir 
-//					+ IndexHandler.titlesFileName 
-//					+ IndexHandler.fileExtension);
-//			this.idsToTitles = null;
-//			
-//			/*
-//			 * write the title-id-mapping to a file
-//			 */
-//			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
-//					+ IndexHandler.titlesToIdsFileName 
-//					+ IndexHandler.fileExtension);
-//			this.titlesToIds = null;
+			writeStringifiedToFile(this.textsSeekListToString(), this.dir
+					+ IndexHandler.textsSeekListFileName
+					+ IndexHandler.fileExtension);
+			this.textsSeeklist = null;
+
+			/*
+			 * write the id-title-mapping to a file
+			 */
+			writeStringifiedToFile(this.titlesToString(), this.dir 
+					+ IndexHandler.titlesFileName 
+					+ IndexHandler.fileExtension);
+			this.idsToTitles = null;
+			
+			/*
+			 * write the title-id-mapping to a file
+			 */
+			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
+					+ IndexHandler.titlesToIdsFileName 
+					+ IndexHandler.fileExtension);
+			this.titlesToIds = null;
 
 			/*
 			 * merge link index files
@@ -522,15 +522,7 @@ class IndexHandler {
 			 */
 			mergeTempFilesIntoFile(IndexHandler.indexFileName, true);
 
-			deleteTemporaryFiles();
-			
-			/*
-			 * write the seeklist to a file - would be too big to stringify first
-			 */
-			this.seekListToFile(this.dir 
-					+ IndexHandler.seekListFileName 
-					+ IndexHandler.fileExtension);
-
+			deleteTemporaryFiles();			
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -566,7 +558,17 @@ class IndexHandler {
 		this.bo = new BufferedOutputStream(this.fos, IndexHandler.bufferSize);
 		File[] filesInFolder = directory.listFiles(filter);
 		int fileCount = filesInFolder.length;
-
+		BufferedOutputStream slBo = null;
+		RandomAccessFile seeklistFile = null;
+		FileOutputStream foss = null;
+		if (fileName.equals(IndexHandler.indexFileName)) {
+			File le = new File(this.dir
+					+ IndexHandler.seekListFileName
+					+ IndexHandler.fileExtension);
+			seeklistFile = new RandomAccessFile(le, "rw");
+			foss = new FileOutputStream(seeklistFile.getFD());
+			slBo = new BufferedOutputStream(foss, IndexHandler.bufferSize);
+		}
 		BufferedReader[] fileBeginnings = new BufferedReader[fileCount];
 		
 		String[] terms = new String[fileCount];
@@ -602,7 +604,11 @@ class IndexHandler {
 						bo.write(";".getBytes());
 					else if (fileName.equals(IndexHandler.indexFileName)) {
 						this.bo.flush(); this.fos.flush();
-						this.seeklist.put(term, this.raIndexFile.getFilePointer());
+						slBo.write(term.getBytes());
+						slBo.write("\t".getBytes());
+						slBo.write((this.raIndexFile.getFilePointer() + "").getBytes());
+						slBo.write("\t".getBytes());
+//						this.seeklist.put(term, this.raIndexFile.getFilePointer());
 					};
 					if (firstLine && fileName.equals(IndexHandler.linkIndexFileName)) {
 						this.bo.write(term.getBytes());
@@ -610,10 +616,9 @@ class IndexHandler {
 					};
 					bo.write(lines[index].substring(1, lines[index].lastIndexOf(".")).getBytes());
 					firstLine = false;
-					currentLine = fileBeginnings[index].readLine().trim(); 
-					lineBuffer[index] = currentLine;
+					currentLine = fileBeginnings[index].readLine();
 					if (currentLine == null || currentLine.trim().isEmpty()) {
-						System.out.println("empty line found");
+//						System.out.println("empty line found");
 						fileBeginnings[index].close();
 						fileBeginnings[index] = null;
 						terms[index] = null;
@@ -630,6 +635,8 @@ class IndexHandler {
 						}
 						
 					} else {
+						currentLine = currentLine.trim(); 
+						lineBuffer[index] = currentLine;
 						terms[index] = conditionalBase64Converter(currentLine, base64Encoded).trim();
 						if (currentLine.contains(":"))
 							lines[index] = currentLine.substring(currentLine.indexOf(":")).trim();
@@ -650,8 +657,7 @@ class IndexHandler {
 			if (term.equals(nextTerm)) {
 				if (winnerSlot == -1) break;
 				if (fileBeginnings[winnerSlot] != null) {
-					currentLine = fileBeginnings[winnerSlot].readLine().trim();
-					lineBuffer[winnerSlot] = currentLine;
+					currentLine = fileBeginnings[winnerSlot].readLine();
 					if (currentLine == null || currentLine.trim().isEmpty()) {
 						fileBeginnings[winnerSlot].close();
 						fileBeginnings[winnerSlot] = null;
@@ -659,6 +665,8 @@ class IndexHandler {
 						terms[winnerSlot] = null;
 						countDown--;
 					} else {
+						currentLine = currentLine.trim();
+						lineBuffer[winnerSlot] = currentLine;
 						terms[winnerSlot] = conditionalBase64Converter(currentLine, base64Encoded).trim();
 						lines[winnerSlot] = currentLine.substring(currentLine.indexOf(":")).trim();
 					}
@@ -669,16 +677,31 @@ class IndexHandler {
 			} else {
 				if (fileName.equals(IndexHandler.indexFileName)) {
 					this.bo.flush(); this.fos.flush();
-					this.seeklist.put(term, this.raIndexFile.getFilePointer());
+					slBo.write(term.getBytes());
+					slBo.write("\t".getBytes());
+					slBo.write((this.raIndexFile.getFilePointer() + "").getBytes());
+					slBo.write("\t".getBytes());
+//					this.seeklist.put(term, this.raIndexFile.getFilePointer());
 				};
 				if (firstLine && fileName.equals(IndexHandler.linkIndexFileName)) {
 					this.bo.write(term.getBytes());
 					this.bo.write(TitleList.colon);
 				};
-				if (termIndex == -1) termIndex = getLowestIndex(lineBuffer, term);
+				if (termIndex == -1) termIndex = getLowestIndex(lineBuffer, term, base64Encoded);
+				if (termIndex == -1) {
+					term = nextTerm;
+					firstLine = true;
+					this.bo.write("null".getBytes());
+					this.bo.write(TitleList.dot);
+					if (!firstLine && fileName.equals(IndexHandler.linkIndexFileName)) this.bo.write("\n".getBytes());
+					continue;
+				}
 //				System.out.println(term + " :leterm and termIndex: " + termIndex);
 //				System.out.println("evil line: " + lines[termIndex]);
-				bo.write(lines[termIndex].substring(1, lines[termIndex].lastIndexOf(".")).getBytes());
+				if (lines[termIndex].contains("."))
+					bo.write(lines[termIndex].substring(1, lines[termIndex].lastIndexOf(".")).getBytes());
+				else
+					bo.write(lines[termIndex].substring(1).getBytes());
 				this.bo.write(TitleList.dot);
 				if (!firstLine && fileName.equals(IndexHandler.linkIndexFileName)) this.bo.write("\n".getBytes());
 			}
@@ -692,6 +715,13 @@ class IndexHandler {
 		this.bo.close();	
 		this.fos.close();
 		this.raIndexFile.close();
+		if (fileName.equals(IndexHandler.indexFileName)) {
+			slBo.flush();
+			foss.flush();
+			slBo.close();
+			foss.close();
+			seeklistFile.close();
+		}
 	}
 
 	private void setupMergingToolsForTempFiles(File[] filesInFolder, BufferedReader[] fileBeginnings, String[] terms, String[] lines, String[] lineBuffer, boolean base64Encoded) throws FileNotFoundException, IOException {
@@ -748,10 +778,12 @@ class IndexHandler {
 		return lowest.trim();
 	}
 	
-	private int getLowestIndex(String[] lines, String lowest) {
+	private int getLowestIndex(String[] lines, String lowest, boolean b64Required) {
 		int index = 0;
 		for(String line : lines) {
 			if (line == null) continue;
+			if (b64Required)
+				line = new String(DatatypeConverter.parseBase64Binary(line.substring(0, line.indexOf(":"))));
 //			System.out.println(line.trim() + " ### " + lowest);
 			if(line != null && line.trim().startsWith(lowest))
 				return index;

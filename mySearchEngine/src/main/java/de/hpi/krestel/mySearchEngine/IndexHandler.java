@@ -1244,11 +1244,11 @@ class IndexHandler {
 	 * Create a snippet of the document. Look for any occurrence of a search
 	 * term and retrieve the text around that occurrence.
 	 * @param documentId the ID of the document
-	 * @param queryTerms the terms searched for
+	 * @param query the original query
 	 * @return the snippet or <tt>null</tt> if the given id is <tt>null</tt>,
 	 *   the document is not known or an error occurs
 	 */
-	public String getSnippetForDocumentId(Long documentId, List<String> queryTerms) {
+	public String getSnippetForDocumentId(Long documentId, String query) {
 		// catch unsuited arguments
 		if (documentId == null) {
 			return null;
@@ -1275,7 +1275,7 @@ class IndexHandler {
 			raTextsFile.seek(offset);
 			try {
 				while (true) {
-					String character = String.valueOf(raTextsFile.readChar());
+					String character = String.valueOf((char) raTextsFile.readByte());
 					if (character.equals("\t")) {
 						break;
 					} else {

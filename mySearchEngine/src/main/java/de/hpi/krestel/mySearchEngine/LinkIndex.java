@@ -64,6 +64,7 @@ class LinkIndex {
 
 		// format: title:othertitle,othertitle,othertitle.\n
 		public void toIndexString(BufferedOutputStream bo) throws IOException {
+			if (title == null || title.isEmpty()) return;
 			// write title
 			bo.write(title.getBytes());
 			bo.write(colon);

@@ -46,7 +46,7 @@ import de.hpi.krestel.mySearchEngine.LinkIndex.TitleList;
 class IndexHandler {
 
 	// just to provide a simple way to switch between full index creation and just merging
-	public static final boolean DEV_MODE = true;
+	public static final boolean DEV_MODE = false;
 
 	// name of the file which stores the index
 	private static final String indexFileName = "index";
@@ -118,8 +118,8 @@ class IndexHandler {
 		linkingPatterns.add(Pattern.compile("\\[http://de\\.wikipedia\\.org/wiki/([^ :#\\]]+)[^\\]]*\\]"));
 	}
 
-//	private static int THRESHOLD = 160 * 1024 * 1024;
-	private static int THRESHOLD = 160 * 64;
+	private static int THRESHOLD = 128 * 1024 * 1024;
+//	private static int THRESHOLD = 160 * 64;
 	private static int bufferSize = 8192;
 	private int byteCounter = 0;
 
@@ -308,6 +308,8 @@ class IndexHandler {
 					// add linking to the linkIndex
 					this.getLinkIndex().addLinkingTitle(linkedTitle, title);
 					// if threshold is reached: write part of the index
+//					if (Runtime.getRuntime().totalMemory() > 1500000000 && Runtime.getRuntime().freeMemory() < 200000000)
+//						writeToIndexFile();
 					this.byteCounter += (title.length() + linkedTitle.length());
 					if (this.byteCounter >= THRESHOLD) {
 						writeToIndexFile();
@@ -326,6 +328,11 @@ class IndexHandler {
 				String term = terms.get(position);
 				this.index.addTermOccurrence(term, id, position);
 				// if threshold is reached: write part of the index
+//				if (Runtime.getRuntime().totalMemory() > 1500000000 && Runtime.getRuntime().freeMemory() < 200000000) {
+//					System.out.println("total mem: " + Runtime.getRuntime().totalMemory());
+//					System.out.println("free mem: " + Runtime.getRuntime().freeMemory());
+//					writeToIndexFile();
+//				}
 				this.byteCounter += (term.length() + id.toString().length() + position.toString().length());
 				if (this.byteCounter >= THRESHOLD) {
 					writeToIndexFile();
@@ -479,16 +486,40 @@ class IndexHandler {
 			 * write remaining parts of the index and link index
 			 */
 			writeToIndexFile();
+			
+			/*
+			 * write the seeklist of the texts file to a file
+			 */
+			writeStringifiedToFile(this.textsSeekListToString(), this.dir
+					+ IndexHandler.textsSeekListFileName
+					+ IndexHandler.fileExtension);
+			this.textsSeeklist = null;
 
 			/*
-			 * merge index files
+			 * write the id-title-mapping to a file
 			 */
-			mergeTempFilesIntoFile(IndexHandler.indexFileName, true);
+			writeStringifiedToFile(this.titlesToString(), this.dir 
+					+ IndexHandler.titlesFileName 
+					+ IndexHandler.fileExtension);
+			this.idsToTitles = null;
+			
+			/*
+			 * write the title-id-mapping to a file
+			 */
+			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
+					+ IndexHandler.titlesToIdsFileName 
+					+ IndexHandler.fileExtension);
+			this.titlesToIds = null;
 
 			/*
 			 * merge link index files
 			 */
 			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
+			
+			/*
+			 * merge index files
+			 */
+			mergeTempFilesIntoFile(IndexHandler.indexFileName, true);
 
 			deleteTemporaryFiles();
 			
@@ -497,27 +528,6 @@ class IndexHandler {
 			 */
 			this.seekListToFile(this.dir 
 					+ IndexHandler.seekListFileName 
-					+ IndexHandler.fileExtension);
-
-			/*
-			 * write the seeklist of the texts file to a file
-			 */
-			writeStringifiedToFile(this.textsSeekListToString(), this.dir
-					+ IndexHandler.textsSeekListFileName
-					+ IndexHandler.fileExtension);
-
-			/*
-			 * write the id-title-mapping to a file
-			 */
-			writeStringifiedToFile(this.titlesToString(), this.dir 
-					+ IndexHandler.titlesFileName 
-					+ IndexHandler.fileExtension);
-
-			/*
-			 * write the title-id-mapping to a file
-			 */
-			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
-					+ IndexHandler.titlesToIdsFileName 
 					+ IndexHandler.fileExtension);
 
 		} catch (IOException e) {
@@ -564,11 +574,13 @@ class IndexHandler {
 		setupMergingToolsForTempFiles(filesInFolder, fileBeginnings, terms, lines, base64Encoded);
 		
 		String term = getLowest(terms);
+//		System.out.println("null from the start: " + (term == null || term.isEmpty()));
 		String nextTerm = term;
 		int index = 0;
 		int countDown = fileCount;
 		int winnerSlot = -1;
-		String line = "";
+		boolean firstLine = true;
+		String currentLine = "";
 		/*
 		 * whenever a term is merged the next line from the file it originated from is read
 		 * this is continued until all lines in all files are read / all readers reached the end of the file
@@ -576,14 +588,27 @@ class IndexHandler {
 		 */
 		while(countDown > 0) {
 			for(index = 0; index < fileCount; index++) {
+//				System.out.println("lines equal null: " + (lines[index] == null));
+//				System.out.println("term " + term + " equal null: " + (term == null));
 				if (lines[index] == null) continue;
 				String currentTerm = terms[index];
 				if (term.compareTo(currentTerm) == 0) {
-					if (line.length() > 0) line += ";";
-					String toAppend = lines[index].substring(1, lines[index].lastIndexOf("."));
-					line += toAppend; 
-					String currentLine = fileBeginnings[index].readLine(); 
+//					System.out.println("same terms found");
+					if (!firstLine)
+						bo.write(";".getBytes());
+					else if (fileName.equals(IndexHandler.indexFileName)) {
+						this.bo.flush(); this.fos.flush();
+						this.seeklist.put(term, this.raIndexFile.getFilePointer());
+					};
+					if (firstLine && fileName.equals(IndexHandler.linkIndexFileName)) {
+						this.bo.write(term.getBytes());
+						this.bo.write(TitleList.colon);
+					};
+					bo.write(lines[index].substring(1, lines[index].lastIndexOf(".")).getBytes());
+					firstLine = false;
+					currentLine = fileBeginnings[index].readLine(); 
 					if (currentLine == null || currentLine.trim().isEmpty()) {
+						System.out.println("empty line found");
 						fileBeginnings[index].close();
 						fileBeginnings[index] = null;
 						terms[index] = null;
@@ -591,11 +616,12 @@ class IndexHandler {
 						countDown--;
 						if (fileName.equals(IndexHandler.indexFileName)) {
 							term = getLowest(lines);
-							if (term.isEmpty()) continue;
-							term = term.substring(0, term.indexOf(":"));
+							if (!term.isEmpty())
+								term = term.substring(0, term.indexOf(":"));
+							else continue;
 						} else {
 							term = getLowest(terms);
-							if (term.isEmpty()) term = currentTerm;
+							if (term.isEmpty()) term = nextTerm;
 						}
 						
 					} else {
@@ -604,27 +630,20 @@ class IndexHandler {
 						winnerSlot = index;
 					}
 				} else if (term.compareTo(currentTerm) < 0 && nextTerm.compareTo(currentTerm) < 0) {
+//					System.out.println("lower 0 found - term:" + term + " currentTerm: " + currentTerm + " nextTerm: " + nextTerm);
 					nextTerm = getLowest(terms);
 				} else {
 					continue;
 				}
 			}
-			if (term.isEmpty()) break;
-			if (fileName.equals(IndexHandler.indexFileName)) {
-				this.bo.flush(); this.fos.flush();
-				this.seeklist.put(term, this.raIndexFile.getFilePointer());
-			}
-			if (fileName.equals(IndexHandler.linkIndexFileName)) {
-				this.bo.write(term.getBytes());
-				this.bo.write(TitleList.colon);
-			}
-			this.bo.write(line.getBytes());
-			this.bo.write(TitleList.dot);
-			if (fileName.equals(IndexHandler.linkIndexFileName)) this.bo.write("\n".getBytes());
+			if (term.isEmpty()) continue;
+			if (!firstLine)
+				this.bo.write(TitleList.dot);
+			if (!firstLine && fileName.equals(IndexHandler.linkIndexFileName)) this.bo.write("\n".getBytes());
 			if (term.equals(nextTerm)) {
 				if (winnerSlot == -1) break;
 				if (fileBeginnings[winnerSlot] != null) {
-					String currentLine = fileBeginnings[winnerSlot].readLine(); 
+					currentLine = fileBeginnings[winnerSlot].readLine(); 
 					if (currentLine == null || currentLine.trim().isEmpty()) {
 						fileBeginnings[winnerSlot].close();
 						fileBeginnings[winnerSlot] = null;
@@ -635,12 +654,25 @@ class IndexHandler {
 						terms[winnerSlot] = conditionalBase64Converter(currentLine, base64Encoded);
 						lines[winnerSlot] = currentLine.substring(currentLine.indexOf(":"));
 					}
+					currentLine = null;
 				}
 				nextTerm = getLowest(terms);
 				winnerSlot = -1;
+			} else {
+				if (fileName.equals(IndexHandler.indexFileName)) {
+					this.bo.flush(); this.fos.flush();
+					this.seeklist.put(term, this.raIndexFile.getFilePointer());
+				};
+				if (firstLine && fileName.equals(IndexHandler.linkIndexFileName)) {
+					this.bo.write(term.getBytes());
+					this.bo.write(TitleList.colon);
+				};
+				bo.write(lines[index].substring(1, lines[index].lastIndexOf(".")).getBytes());
+				this.bo.write(TitleList.dot);
+				if (!firstLine && fileName.equals(IndexHandler.linkIndexFileName)) this.bo.write("\n".getBytes());
 			}
 			term = nextTerm;
-			line = "";
+			firstLine = true;
 			this.bo.flush();
 			this.fos.flush();
 		}
@@ -665,7 +697,8 @@ class IndexHandler {
 			BufferedReader breed = new BufferedReader(reader);
 			fileBeginnings[index] = breed;
 			line = breed.readLine();
-			if (line == null) {
+			System.out.println("line: " + line);
+			if (line == null || line.trim().isEmpty()) {
 				breed.close();
 				fileBeginnings[index] = null;
 			} else {
@@ -678,6 +711,7 @@ class IndexHandler {
 	
 	private String conditionalBase64Converter(String content, boolean conversionRequired) {
 		String interestingPart = content.substring(0, content.indexOf(":"));
+		content = null;
 		return conversionRequired ? new String(DatatypeConverter.parseBase64Binary(interestingPart)) : interestingPart;
 	}
 	
@@ -691,10 +725,11 @@ class IndexHandler {
 			}
 		}
 		for(String line : lines) {
+//			System.out.println(line);
 			if(line != null && lowest.compareTo(line) > 0)
 				lowest = line;
-			System.out.println(lines[0] + lines[1] + lines[2] + lines[3] + lines[4] + lines[5] + " lowest should be: " + lowest);
 		}
+		lines = null;
 		return lowest;
 	}
 

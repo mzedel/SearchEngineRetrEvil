@@ -122,7 +122,8 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		if (!dir.endsWith("/")) {
 			dir = dir.concat("/");
 		}
-		
+//		System.out.println("total mem: " + Runtime.getRuntime().totalMemory());
+//		System.out.println("free mem: " + Runtime.getRuntime().freeMemory());
 		// get dump file
 		String dumpFile = new File(dir).getParent() + "/" + "deWikipediaDump.xml";
 		if (IndexHandler.DEV_MODE)

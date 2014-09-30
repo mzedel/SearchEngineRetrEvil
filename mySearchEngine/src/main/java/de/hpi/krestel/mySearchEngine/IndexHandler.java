@@ -13,7 +13,9 @@ import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.RandomAccessFile;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -522,7 +524,7 @@ class IndexHandler {
 			 */
 			mergeTempFilesIntoFile(IndexHandler.indexFileName, true);
 
-			deleteTemporaryFiles();			
+			deleteTemporaryFiles();
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -592,7 +594,9 @@ class IndexHandler {
 		 * this is continued until all lines in all files are read / all readers reached the end of the file
 		 * lines of files will be merged whenever a read line yields the same term  
 		 */
-		while(countDown > 0) {
+		int safetyCounter = countDown * 2;
+		while(countDown > 0 || safetyCounter > 0) {
+			safetyCounter--;
 			for(index = 0; index < fileCount; index++) {
 //				System.out.println("lines equal null: " + (lines[index] == null));
 //				System.out.println("term " + term + " equal null: " + (term == null));
@@ -602,7 +606,7 @@ class IndexHandler {
 //					System.out.println("same terms found");
 					if (!firstLine)
 						bo.write(";".getBytes());
-					else if (fileName.equals(IndexHandler.indexFileName)) {
+					if (firstLine && fileName.equals(IndexHandler.indexFileName)) {
 						this.bo.flush(); this.fos.flush();
 						slBo.write(term.getBytes());
 						slBo.write("\t".getBytes());
@@ -675,7 +679,7 @@ class IndexHandler {
 				nextTerm = getLowest(terms);
 				winnerSlot = -1;
 			} else {
-				if (fileName.equals(IndexHandler.indexFileName)) {
+				if (firstLine && fileName.equals(IndexHandler.indexFileName)) {
 					this.bo.flush(); this.fos.flush();
 					slBo.write(term.getBytes());
 					slBo.write("\t".getBytes());
@@ -909,33 +913,37 @@ class IndexHandler {
 	 */
 	private void loadIndex() {
 		try {
-			// load the seek list
-			File seekListFile = new File(this.dir 
-					+ IndexHandler.seekListFileName 
-					+ IndexHandler.fileExtension);
-
-			Scanner scanner = new Scanner(seekListFile);
-			scanner.useDelimiter("\\A");
-			this.parseSeekListFileString(scanner.next());
-			scanner.close();
-
+			String firstPart = "";
 			// load the seek list of the texts file
 			File textsSeekListFile = new File(this.dir 
 					+ IndexHandler.textsSeekListFileName 
 					+ IndexHandler.fileExtension);
 
-			scanner = new Scanner(textsSeekListFile);
-			scanner.useDelimiter("\\A");
-			this.parseTextsSeekListFileString(scanner.next());
+			Scanner scanner = new Scanner(textsSeekListFile);
+			scanner.useDelimiter("\t");
+			while (scanner.hasNext())
+				if (!firstPart.isEmpty()) {
+					this.parseTextsSeekListFileString(firstPart + "\t" + scanner.next());
+					firstPart = "";
+				} else {
+					firstPart = scanner.next();
+				}
 			scanner.close();
+			System.out.println("texts seeklist complete");
 
 			// load the id-titles-mapping
 			File titlesFile = new File(this.dir 
 					+ IndexHandler.titlesFileName 
 					+ IndexHandler.fileExtension);
 			scanner = new Scanner(titlesFile);
-			scanner.useDelimiter("\\A");
-			this.parseTitlesFileString(scanner.next());
+			scanner.useDelimiter("\t");
+			while (scanner.hasNext())
+				if (!firstPart.isEmpty()) {
+					this.parseTitlesFileString(firstPart + "\t" + scanner.next());
+					firstPart = "";
+				} else {
+					firstPart = scanner.next();
+				}
 			scanner.close();
 
 			// load the titles-id-mapping
@@ -943,9 +951,36 @@ class IndexHandler {
 					+ IndexHandler.titlesToIdsFileName
 					+ IndexHandler.fileExtension);
 			scanner = new Scanner(titlesToIdsFile);
-			scanner.useDelimiter("\\A");
-			this.parseTitlesToIdsFileString(scanner.next());
+			scanner.useDelimiter("\t");
+			while (scanner.hasNext())
+				if (!firstPart.isEmpty()) {
+					this.parseTitlesToIdsFileString(firstPart + "\t" + scanner.next());
+					firstPart = "";
+				} else {
+					firstPart = scanner.next();
+				}
+
+			System.out.println("title-id-mapping complete");
 			scanner.close();
+
+			// load the seek list
+			File seekListFile = new File(this.dir 
+					+ IndexHandler.seekListFileName 
+					+ IndexHandler.fileExtension);
+
+			scanner = new Scanner(seekListFile);
+			scanner.useDelimiter("\t");
+			while (scanner.hasNext())
+				if (!firstPart.isEmpty()) {
+					this.parseSeekListFileString(firstPart + "\t" + scanner.next());
+					firstPart = "";
+				} else {
+					firstPart = scanner.next();
+				}
+			scanner.close();
+			SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss");
+	        Date resultdate = new Date(System.currentTimeMillis());
+			System.out.println(sdf.format(resultdate) +  " seeklist complete");
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -957,29 +992,8 @@ class IndexHandler {
 	 * @param string seek list file string
 	 */
 	private void parseSeekListFileString(String string) {
-		Scanner tok = new Scanner(string);
-		tok.useDelimiter("\t");
-		boolean isTerm = true;	// whether the current token is the term
-		String term = null;
-		Long offset = null;
-
-		while (tok.hasNext()) {
-			String token = tok.next();
-			try {
-				if (isTerm) {
-					// parse the term
-					term = token;
-				} else {
-					// parse the term's offset and add it to the map
-					offset = Long.parseLong(token);
-					this.seeklist.put(term, offset);
-				}
-				isTerm = !isTerm;
-			} catch (NumberFormatException e) {
-				e.printStackTrace();
-			}
-		}
-		tok.close();
+		String[] parts = string.split("\t");
+		this.seeklist.put(parts[0], Long.parseLong(parts[1]));
 	}
 
 	/**
@@ -988,29 +1002,8 @@ class IndexHandler {
 	 * @param string seek list file string
 	 */
 	private void parseTextsSeekListFileString(String string) {
-		Scanner tok = new Scanner(string);
-		tok.useDelimiter("\t");
-		boolean isId = true;	// whether the current token is the id
-		Long id = null;
-		Long offset = null;
-
-		while (tok.hasNext()) {
-			String token = tok.next();
-			try {
-				if (isId) {
-					// parse the term
-					id = Long.parseLong(token);
-				} else {
-					// parse the term's offset and add it to the map
-					offset = Long.parseLong(token);
-					this.textsSeeklist.put(id, offset);
-				}
-				isId = !isId;
-			} catch (NumberFormatException e) {
-				e.printStackTrace();
-			}
-		}
-		tok.close();
+		String[] parts = string.split("\t");
+		this.textsSeeklist.put(Long.parseLong(parts[0]), Long.parseLong(parts[1]));
 	}
 
 	/**
@@ -1019,51 +1012,13 @@ class IndexHandler {
 	 * @param string seek list file string
 	 */
 	private void parseTitlesFileString(String string) {
-		Scanner tok = new Scanner(string);
-		tok.useDelimiter("\t");
-		boolean isId = true;	// whether the current token is the id
-		Long id = null;
-		String title = null;
-		while (tok.hasNext()) {
-			String token = tok.next();
-			try {
-				if (isId) {
-					// parse the term
-					id = Long.parseLong(token);
-				} else {
-					// parse the term's offset and add it to the map
-					title = token;
-					this.idsToTitles.put(id, title);
-				}
-				isId = !isId;
-			} catch (NumberFormatException e) {
-				e.printStackTrace();
-			}
-		}
-		tok.close();
+		String[] parts = string.split("\t");
+		this.idsToTitles.put(Long.parseLong(parts[0]), parts[1]);
 	}
 
 	private void parseTitlesToIdsFileString(String string) {
-		Scanner tok = new Scanner(string);
-		tok.useDelimiter("\t");
-		boolean isTitle = true;
-		Long id = null;
-		String title = null;
-		while (tok.hasNext()) {
-			String token = tok.next();
-			try {
-				if (isTitle) {
-					title = token;
-				} else {
-					id = Long.parseLong(token);
-					this.getTitlesToIds().put(title, id);
-				}
-				isTitle = !isTitle;
-			} catch (NumberFormatException e) {
-				e.printStackTrace();
-			}
-		}
-		tok.close();
+		String[] parts = string.split("\t");
+		this.getTitlesToIds().put(parts[0], Long.parseLong(parts[1]));
 	}
 
 	/**

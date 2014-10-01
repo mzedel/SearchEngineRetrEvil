@@ -16,10 +16,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.RandomAccessFile;
 import java.io.Reader;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -52,7 +49,7 @@ import de.hpi.krestel.mySearchEngine.LinkIndex.TitleList;
 class IndexHandler {
 
 	// just to provide a simple way to switch between full index creation and just merging
-	public static final boolean DEV_MODE = false;
+	public static final boolean DEV_MODE = true;
 
 	// name of the file which stores the index
 	private static final String indexFileName = "index";
@@ -585,7 +582,6 @@ class IndexHandler {
 		setupMergingToolsForTempFiles(filesInFolder, fileBeginnings, terms, lines, lineBuffer, base64Encoded);
 		
 		String term = getLowest(terms);
-//		System.out.println("null from the start: " + (term == null || term.isEmpty()));
 		String nextTerm = term;
 		int index = 0;
 		int countDown = fileCount;
@@ -602,12 +598,9 @@ class IndexHandler {
 		while(countDown > 0 || safetyCounter > 0) {
 			safetyCounter--;
 			for(index = 0; index < fileCount; index++) {
-//				System.out.println("lines equal null: " + (lines[index] == null));
-//				System.out.println("term " + term + " equal null: " + (term == null));
 				if (lines[index] == null) continue;
 				String currentTerm = terms[index];
 				if (term.compareTo(currentTerm) == 0) {
-//					System.out.println("same terms found");
 					if (!firstLine)
 						bo.write(";".getBytes());
 					if (firstLine && fileName.equals(IndexHandler.indexFileName)) {
@@ -626,7 +619,6 @@ class IndexHandler {
 					firstLine = false;
 					currentLine = fileBeginnings[index].readLine();
 					if (currentLine == null || currentLine.trim().isEmpty()) {
-//						System.out.println("empty line found");
 						fileBeginnings[index].close();
 						fileBeginnings[index] = null;
 						terms[index] = null;
@@ -652,7 +644,6 @@ class IndexHandler {
 						winnerSlot = index;
 					}
 				} else if (term.compareTo(currentTerm) < 0 && nextTerm.compareTo(currentTerm) < 0) {
-//					System.out.println("lower 0 found - term:" + term + " currentTerm: " + currentTerm + " nextTerm: " + nextTerm);
 					nextTerm = getLowest(terms);
 				} else {
 					continue;
@@ -704,8 +695,6 @@ class IndexHandler {
 					if (!firstLine && fileName.equals(IndexHandler.linkIndexFileName)) this.bo.write("\n".getBytes());
 					continue;
 				}
-//				System.out.println(term + " :leterm and termIndex: " + termIndex);
-//				System.out.println("evil line: " + lines[termIndex]);
 				if (lines[termIndex].contains("."))
 					bo.write(lines[termIndex].substring(1, lines[termIndex].lastIndexOf(".")).getBytes());
 				else
@@ -747,7 +736,6 @@ class IndexHandler {
 			fileBeginnings[index] = breed;
 			line = breed.readLine().trim();
 			lineBuffer[index] = line;
-//			System.out.println("line: " + line);
 			if (line == null || line.trim().isEmpty()) {
 				breed.close();
 				fileBeginnings[index] = null;
@@ -778,7 +766,6 @@ class IndexHandler {
 			}
 		}
 		for(String line : lines) {
-//			System.out.println(line);
 			if(line != null && !line.isEmpty() && lowest.compareTo(line.trim()) > 0)
 				lowest = line;
 		}
@@ -792,7 +779,6 @@ class IndexHandler {
 			if (line == null) continue;
 			if (b64Required)
 				line = new String(DatatypeConverter.parseBase64Binary(line.substring(0, line.indexOf(":"))));
-//			System.out.println(line.trim() + " ### " + lowest);
 			if(line != null && line.trim().startsWith(lowest))
 				return index;
 			index++;
@@ -918,16 +904,63 @@ class IndexHandler {
 	private void loadIndex() {
 		try {
 			String firstPart = "";
+			// load the seek list of the texts file
+			File textsSeekListFile = new File(this.dir 
+					+ IndexHandler.textsSeekListFileName 
+					+ IndexHandler.fileExtension);
+
+			Scanner scanner = new Scanner(textsSeekListFile);
+			scanner.useDelimiter("\t");
+			while (scanner.hasNext())
+				if (!firstPart.isEmpty()) {
+					this.parseTextsSeekListFileString(firstPart + "\t" + scanner.next());
+					firstPart = "";
+				} else {
+					firstPart = scanner.next();
+				}
+			scanner.close();
+
+			// load the id-titles-mapping
+			File titlesFile = new File(this.dir 
+					+ IndexHandler.titlesFileName 
+					+ IndexHandler.fileExtension);
+			scanner = new Scanner(titlesFile);
+			scanner.useDelimiter("\t");
+			while (scanner.hasNext())
+				if (!firstPart.isEmpty()) {
+					this.parseTitlesFileString(firstPart + "\t" + scanner.next());
+					firstPart = "";
+				} else {
+					firstPart = scanner.next();
+				}
+			scanner.close();
+
+			// load the titles-id-mapping
+			File titlesToIdsFile = new File(this.dir 
+					+ IndexHandler.titlesToIdsFileName
+					+ IndexHandler.fileExtension);
+			scanner = new Scanner(titlesToIdsFile);
+			scanner.useDelimiter("\t");
+			while (scanner.hasNext())
+				if (!firstPart.isEmpty()) {
+					this.parseTitlesToIdsFileString(firstPart + "\t" + scanner.next());
+					firstPart = "";
+				} else {
+					firstPart = scanner.next();
+				}
+
+			scanner.close();
+
 			// load the seek list
-			
 			InputStream seekListFile = new FileInputStream(this.dir 
 					+ IndexHandler.seekListFileName 
 					+ IndexHandler.fileExtension);
 			Reader reader = new InputStreamReader(seekListFile);
-			Reader scanner = new BufferedReader(reader, IndexHandler.bufferSize);
+			Reader bread = new BufferedReader(reader, IndexHandler.bufferSize);
 			int r;
+			// set a small buffersize to avoid unnecessary copies of the containing array
 			StringBuilder builder = new StringBuilder(256);
-			while ((r = scanner.read()) != -1) {
+			while ((r = bread.read()) != -1) {
 				char ch = (char) r;
 				if ('\t' == ch) {
 					if (!firstPart.isEmpty()) {
@@ -935,7 +968,8 @@ class IndexHandler {
 						firstPart = "";
 						builder.setLength(0);
 					} else {
-						System.out.println(Runtime.getRuntime().freeMemory() / 1024 / 1024 + " of total: " + Runtime.getRuntime().totalMemory() / 1024 / 1024);
+						System.out.println(Runtime.getRuntime().freeMemory() / 1024 / 1024 + 
+								" of total: " + Runtime.getRuntime().totalMemory() / 1024 / 1024);
 						firstPart = builder.toString();
 						builder.setLength(0);
 					}
@@ -943,64 +977,9 @@ class IndexHandler {
 					builder.append(ch);
 				}
 			}
-			scanner.close();
+			bread.close();
 			seekListFile.close();
-			SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss");
-	        Date resultdate = new Date(System.currentTimeMillis());
-			System.out.println(sdf.format(resultdate) +  " seeklist complete");
-			
-//			// load the seek list of the texts file
-//			File textsSeekListFile = new File(this.dir 
-//					+ IndexHandler.textsSeekListFileName 
-//					+ IndexHandler.fileExtension);
-//
-//			scanner = new Scanner(textsSeekListFile);
-//			scanner.useDelimiter("\t");
-//			while (scanner.hasNext())
-//				if (!firstPart.isEmpty()) {
-//					this.textsSeeklist.put(Long.parseLong(firstPart), Long.parseLong(scanner.next()));
-//					firstPart = "";
-//				} else {
-//					firstPart = scanner.next();
-//				}
-//			scanner.close();
-//			System.out.println("texts seeklist complete");
-//			
-//			
-//
-//			// load the id-titles-mapping
-//			File titlesFile = new File(this.dir 
-//					+ IndexHandler.titlesFileName 
-//					+ IndexHandler.fileExtension);
-//			scanner = new Scanner(titlesFile);
-//			scanner.useDelimiter("\t");
-//			while (scanner.hasNext())
-//				if (!firstPart.isEmpty()) {
-//					this.idsToTitles.put(Long.parseLong(firstPart), scanner.next());
-//					firstPart = "";
-//				} else {
-//					firstPart = scanner.next();
-//				}
-//			scanner.close();
-//
-//			// load the titles-id-mapping
-//			File titlesToIdsFile = new File(this.dir 
-//					+ IndexHandler.titlesToIdsFileName
-//					+ IndexHandler.fileExtension);
-//			scanner = new Scanner(titlesToIdsFile);
-//			scanner.useDelimiter("\t");
-//			while (scanner.hasNext())
-//				if (!firstPart.isEmpty()) {
-//					this.getTitlesToIds().put(firstPart, Long.parseLong(scanner.next()));
-//					firstPart = "";
-//				} else {
-//					firstPart = scanner.next();
-//				}
-//
-//			System.out.println("title-id-mapping complete");
-//			scanner.close();
-
-			
+			System.out.println("seeklist complete");
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -1276,13 +1255,15 @@ class IndexHandler {
 
 	/**
 	 * Create a snippet of the document. Look for any occurrence of a search
-	 * term and retrieve the text around that occurrence.
+	 * term and retrieve the text around that occurrence, or use the beginning
+	 * of the document if no such occurrence is available.
 	 * @param documentId the ID of the document
-	 * @param query the original query
+	 * @param queryTerms the relevant terms of the query; may be <tt>null</tt>
+	 *   or empty, in which case it is ignored
 	 * @return the snippet or <tt>null</tt> if the given id is <tt>null</tt>,
 	 *   the document is not known or an error occurs
 	 */
-	public String getSnippetForDocumentId(Long documentId, String query) {
+	public String getSnippetForDocumentId(Long documentId, List<String> queryTerms) {
 		// catch unsuited arguments
 		if (documentId == null) {
 			return null;
@@ -1328,23 +1309,64 @@ class IndexHandler {
 			// no text
 			return null;
 		}
+		
+		// search for an occurrence of a query term
+		Integer termOccurrenceIndex = null;
+		if (queryTerms != null && !queryTerms.isEmpty()) {
+			String[] termCandidates = text.split(" ", 500);	// limit to first 500 terms for performance
+			for (String term : termCandidates) {
+				String processedTerm = null;
+				try {
+					List<String> processedTermResult = this.processRawText(term);
+					if (processedTermResult != null && !processedTermResult.isEmpty() 
+							&& !processedTermResult.get(0).equals("")) {
+						processedTerm = processedTermResult.get(0);
+					}
+				} catch (IOException e) {
+					e.printStackTrace();  // should not happen
+				}
+				if (processedTerm != null && !"".equals(processedTerm)) {
+					if (queryTerms.contains(processedTerm)) {
+						termOccurrenceIndex = text.indexOf(term);
+						break;
+					}
+				}
+			}
+		}
 
 		/*
 		 * Create a snippet from the text.
-		 * TODO: consider query terms; this is difficult because they are
-		 * pre-processed (which means that the text would have to be pre-
-		 * processed as well, which makes creating the snippet difficult)
 		 * TODO: make sure that UTF-8 works
 		 */
-		// simple algorithm: just use the beginning
-		int endIndex = Math.min(240, text.length());				// exclusive end index
-		int lastSpaceIndex = text.lastIndexOf(" ", (endIndex - 1));	// searching backwards
-		if (lastSpaceIndex > 180) {
-			endIndex = lastSpaceIndex;
+		int startIndex = 0;
+		int endIndex = 0;
+		if (termOccurrenceIndex == null) {
+			// simple algorithm: just use the beginning
+			endIndex = Math.min(240, text.length());
+			int lastSpaceIndex = text.lastIndexOf(" ", (endIndex - 1));
+			if (lastSpaceIndex > 200) {
+				endIndex = lastSpaceIndex;
+			}
+			return text.substring(startIndex, endIndex)
+					.replace('\n', ' ')			// remove newlines
+					+ "...";
+		} else {
+			// advanced algorithm: use text around the occurrence
+			if (termOccurrenceIndex > 100) {
+				startIndex = text.lastIndexOf(" ", termOccurrenceIndex - 100) + 1;
+				if (termOccurrenceIndex - startIndex > 140) {
+					startIndex = termOccurrenceIndex - 100;
+				}
+			}
+			endIndex = Math.min(termOccurrenceIndex + 120, text.length());
+			int lastSpaceIndex = text.lastIndexOf(" ", (endIndex - 1));
+			if (lastSpaceIndex - startIndex > 200) {
+				endIndex = lastSpaceIndex;
+			}
+			return (startIndex > 0 ? "..." : "")
+					+ text.substring(startIndex, endIndex).replace('\n', ' ')	// remove newlines
+					+ "...";
 		}
-		return text.substring(0, endIndex)	// endIndex cannot be 0 due to a former test of text
-				.replace('\n', ' ')			// remove newlines
-				+ "...";
 	}
 
 	/*

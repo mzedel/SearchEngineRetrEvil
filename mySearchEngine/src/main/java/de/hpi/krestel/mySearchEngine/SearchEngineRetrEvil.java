@@ -46,6 +46,15 @@ import org.xml.sax.helpers.DefaultHandler;
  *    (with *). In keyword queries, phrase queries and prefix queries are
  *    extracted, executed as a boolean query, and the result set restricts the
  *    result set of the keyword query.
+ * Snippets:
+ *  - Snippets are created from the text of their respective page, which is
+ *    stored while indexing.
+ *  - Relevant query terms for snippet creation are extracted by removing all
+ *    operators (boolean, LINKTO, *, quotation marks) from the query text and
+ *    pre-processing the remaining query. If one of the resulting terms is found
+ *    in the text of the page, the snippet is created from the surrounding
+ *    lines (this may not work for link queries and prefix queries). Otherwise,
+ *    the beginning of the page is used.
  */
 public class SearchEngineRetrEvil extends SearchEngine {
 	
@@ -130,8 +139,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		if (!dir.endsWith("/")) {
 			dir = dir.concat("/");
 		}
-//		System.out.println("total mem: " + Runtime.getRuntime().totalMemory());
-//		System.out.println("free mem: " + Runtime.getRuntime().freeMemory());
 		// get dump file
 		String dumpFile = new File(dir).getParent() + "/" + "deWikipediaDump.xml";
 		if (IndexHandler.DEV_MODE)
@@ -212,7 +219,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		
 		List<Long> documentIds;
 		if (isLinkQuery(query)) {
-			// a link query
+			// a link query; do not extract query terms
 			documentIds = processLinkQuery(query);
 		} else if (!WEAK_BOOLEAN_MODE && isBooleanQuery(query)) {
 			// a query which yields a binary ranking
@@ -232,7 +239,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 * For each document, the title followed by a snippet is returned.<br>
 	 * If the given list is <tt>null</tt> or empty, an empty list is returned.
 	 * @param documentIds the IDs of the relevant documents
-	 * @param query the original query, used for snippet creation
+	 * @param query the query text
 	 * @return a list of String representations of the relevant documents which
 	 * 	is never <tt>null</tt>
 	 */
@@ -244,13 +251,21 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		ArrayList<String> result = new ArrayList<String>(documentIds.size());
+		List<String> queryTerms = null;
+		if (query != null) {
+			try {
+				queryTerms = this.indexHandler.processRawText(removeAllOperators(query));
+			} catch (IOException e) {
+				e.printStackTrace();	// should not happen
+			}
+		}
 		
 		for (Long documentId : documentIds) {
 			// get the title of the document
 			String title = this.indexHandler.getIdsToTitles().get(documentId);
 			
 			// get a snippet of the document
-			String snippet = this.indexHandler.getSnippetForDocumentId(documentId, query);
+			String snippet = this.indexHandler.getSnippetForDocumentId(documentId, queryTerms);
 				
 			// store: title + newline (unless snippet is null) + snippet
 			result.add((title != null ? title : "") + (snippet != null ? ("\n" + snippet) : ""));
@@ -599,6 +614,20 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	}
 	
 	/**
+	 * Remove all operators (boolean, LINKTO, *, quotation marks) from a query
+	 * string. Used for snippet creation.
+	 * @param query the query text
+	 * @return the cleaned query text
+	 */
+	private static String removeAllOperators(String query) {
+		return removeBooleanOperators(query)
+				.replaceAll("LINKTO ", "")
+				.replaceAll("[*]", "")
+				.replaceAll("\"", "")
+				.replaceAll("'", "");
+	}
+	
+	/**
 	 * Process the query as a keyword query which is handled using the 
 	 * probabilistic model BM25. Returns a maximum of <tt>topK</tt> titles
 	 * of documents ordered by rank (highest rank first).<br><br>
@@ -618,7 +647,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	 */
 	private List<Long> processKeywordQuery(String query, int topK, int prf) {
 		List<Long> result = new ArrayList<Long>();
-		String originalQuery = query;
 		
 		try {
 			/*
@@ -626,24 +654,18 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			 * the query terms, and extract phrase queries
 			 * and prefix queries which limit the result set.
 			 */
-System.out.println("original query: " + query);
 			query = removeBooleanOperators(query);
-System.out.println("cleaned query: " + query);
 			
 			List<String> terms = this.indexHandler.processRawText(query);
-System.out.println("terms: " + java.util.Arrays.toString(terms.toArray()));
 			
 			StringBuilder booleanQueryBuilder = new StringBuilder(100);
 			query = extractBooleanQueryParts(query, booleanQueryBuilder);
-System.out.println("keyword query: " + query);
 			String booleanQuery = booleanQueryBuilder.toString();
-System.out.println("boolean query: " + booleanQuery);
 			
 			List<Long> potentialDocumentIds = null;
 			if (booleanQuery.length() > 0) {
 				// limit the result set to the set yielded by the boolean query
 				potentialDocumentIds = this.processBooleanQuery(booleanQuery);
-System.out.println("potential IDs: " + java.util.Arrays.toString(potentialDocumentIds.toArray()));
 				
 			} // else: no limitiation
 			
@@ -659,7 +681,7 @@ System.out.println("potential IDs: " + java.util.Arrays.toString(potentialDocume
 				ArrayList<Long> ids = this.processInnerBM25Query(terms, prf, potentialDocumentIds);
 				
 				// get the snippets
-				ArrayList<String> snippets = this.createQueryAnswerForDocuments(ids, originalQuery);
+				ArrayList<String> snippets = this.createQueryAnswerForDocuments(ids, query);
 				
 				// use the snippets to expand the query
 				terms = this.expandQueryTerms(terms, snippets);
@@ -671,7 +693,6 @@ System.out.println("potential IDs: " + java.util.Arrays.toString(potentialDocume
 			e.printStackTrace();
 		}
 		
-System.out.println("result: " + java.util.Arrays.toString(result.toArray()));
 		return result;
 	}
 	
@@ -692,6 +713,7 @@ System.out.println("result: " + java.util.Arrays.toString(result.toArray()));
 		// pre-process snippets
 		ArrayList<List<String>> processedSnippets = new ArrayList<List<String>>(snippets.size());
 		for (String snippet : snippets) {
+			snippet = snippet.replaceAll("...", "");	// added during the snippet creation, no significance
 			processedSnippets.add(this.indexHandler.processRawText(snippet));
 		}
 		

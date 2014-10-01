@@ -5,17 +5,21 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.EOFException;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.FilenameFilter;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.RandomAccessFile;
+import java.io.Reader;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -492,39 +496,39 @@ class IndexHandler {
 			/*
 			 * write the seeklist of the texts file to a file
 			 */
-			writeStringifiedToFile(this.textsSeekListToString(), this.dir
-					+ IndexHandler.textsSeekListFileName
-					+ IndexHandler.fileExtension);
-			this.textsSeeklist = null;
-
-			/*
-			 * write the id-title-mapping to a file
-			 */
-			writeStringifiedToFile(this.titlesToString(), this.dir 
-					+ IndexHandler.titlesFileName 
-					+ IndexHandler.fileExtension);
-			this.idsToTitles = null;
-			
-			/*
-			 * write the title-id-mapping to a file
-			 */
-			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
-					+ IndexHandler.titlesToIdsFileName 
-					+ IndexHandler.fileExtension);
-			this.titlesToIds = null;
-
-			/*
-			 * merge link index files
-			 */
-			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
-			this.linkIndex = null;
+//			writeStringifiedToFile(this.textsSeekListToString(), this.dir
+//					+ IndexHandler.textsSeekListFileName
+//					+ IndexHandler.fileExtension);
+//			this.textsSeeklist = null;
+//
+//			/*
+//			 * write the id-title-mapping to a file
+//			 */
+//			writeStringifiedToFile(this.titlesToString(), this.dir 
+//					+ IndexHandler.titlesFileName 
+//					+ IndexHandler.fileExtension);
+//			this.idsToTitles = null;
+//			
+//			/*
+//			 * write the title-id-mapping to a file
+//			 */
+//			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
+//					+ IndexHandler.titlesToIdsFileName 
+//					+ IndexHandler.fileExtension);
+//			this.titlesToIds = null;
+//
+//			/*
+//			 * merge link index files
+//			 */
+//			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
+//			this.linkIndex = null;
 			
 			/*
 			 * merge index files
 			 */
 			mergeTempFilesIntoFile(IndexHandler.indexFileName, true);
 
-			deleteTemporaryFiles();
+//			deleteTemporaryFiles();
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -914,73 +918,89 @@ class IndexHandler {
 	private void loadIndex() {
 		try {
 			String firstPart = "";
-			// load the seek list of the texts file
-			File textsSeekListFile = new File(this.dir 
-					+ IndexHandler.textsSeekListFileName 
-					+ IndexHandler.fileExtension);
-
-			Scanner scanner = new Scanner(textsSeekListFile);
-			scanner.useDelimiter("\t");
-			while (scanner.hasNext())
-				if (!firstPart.isEmpty()) {
-					this.parseTextsSeekListFileString(firstPart + "\t" + scanner.next());
-					firstPart = "";
-				} else {
-					firstPart = scanner.next();
-				}
-			scanner.close();
-			System.out.println("texts seeklist complete");
-
-			// load the id-titles-mapping
-			File titlesFile = new File(this.dir 
-					+ IndexHandler.titlesFileName 
-					+ IndexHandler.fileExtension);
-			scanner = new Scanner(titlesFile);
-			scanner.useDelimiter("\t");
-			while (scanner.hasNext())
-				if (!firstPart.isEmpty()) {
-					this.parseTitlesFileString(firstPart + "\t" + scanner.next());
-					firstPart = "";
-				} else {
-					firstPart = scanner.next();
-				}
-			scanner.close();
-
-			// load the titles-id-mapping
-			File titlesToIdsFile = new File(this.dir 
-					+ IndexHandler.titlesToIdsFileName
-					+ IndexHandler.fileExtension);
-			scanner = new Scanner(titlesToIdsFile);
-			scanner.useDelimiter("\t");
-			while (scanner.hasNext())
-				if (!firstPart.isEmpty()) {
-					this.parseTitlesToIdsFileString(firstPart + "\t" + scanner.next());
-					firstPart = "";
-				} else {
-					firstPart = scanner.next();
-				}
-
-			System.out.println("title-id-mapping complete");
-			scanner.close();
-
 			// load the seek list
-			File seekListFile = new File(this.dir 
+			
+			InputStream seekListFile = new FileInputStream(this.dir 
 					+ IndexHandler.seekListFileName 
 					+ IndexHandler.fileExtension);
-
-			scanner = new Scanner(seekListFile);
-			scanner.useDelimiter("\t");
-			while (scanner.hasNext())
-				if (!firstPart.isEmpty()) {
-					this.parseSeekListFileString(firstPart + "\t" + scanner.next());
-					firstPart = "";
+			Reader reader = new InputStreamReader(seekListFile);
+			Reader scanner = new BufferedReader(reader, IndexHandler.bufferSize);
+			int r;
+			StringBuilder builder = new StringBuilder(256);
+			while ((r = scanner.read()) != -1) {
+				char ch = (char) r;
+				if ('\t' == ch) {
+					if (!firstPart.isEmpty()) {
+						this.seeklist.put(firstPart, Long.parseLong(builder.toString()));
+						firstPart = "";
+						builder.setLength(0);
+					} else {
+						System.out.println(Runtime.getRuntime().freeMemory() / 1024 / 1024 + " of total: " + Runtime.getRuntime().totalMemory() / 1024 / 1024);
+						firstPart = builder.toString();
+						builder.setLength(0);
+					}
 				} else {
-					firstPart = scanner.next();
+					builder.append(ch);
 				}
+			}
 			scanner.close();
+			seekListFile.close();
 			SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss");
 	        Date resultdate = new Date(System.currentTimeMillis());
 			System.out.println(sdf.format(resultdate) +  " seeklist complete");
+			
+//			// load the seek list of the texts file
+//			File textsSeekListFile = new File(this.dir 
+//					+ IndexHandler.textsSeekListFileName 
+//					+ IndexHandler.fileExtension);
+//
+//			scanner = new Scanner(textsSeekListFile);
+//			scanner.useDelimiter("\t");
+//			while (scanner.hasNext())
+//				if (!firstPart.isEmpty()) {
+//					this.textsSeeklist.put(Long.parseLong(firstPart), Long.parseLong(scanner.next()));
+//					firstPart = "";
+//				} else {
+//					firstPart = scanner.next();
+//				}
+//			scanner.close();
+//			System.out.println("texts seeklist complete");
+//			
+//			
+//
+//			// load the id-titles-mapping
+//			File titlesFile = new File(this.dir 
+//					+ IndexHandler.titlesFileName 
+//					+ IndexHandler.fileExtension);
+//			scanner = new Scanner(titlesFile);
+//			scanner.useDelimiter("\t");
+//			while (scanner.hasNext())
+//				if (!firstPart.isEmpty()) {
+//					this.idsToTitles.put(Long.parseLong(firstPart), scanner.next());
+//					firstPart = "";
+//				} else {
+//					firstPart = scanner.next();
+//				}
+//			scanner.close();
+//
+//			// load the titles-id-mapping
+//			File titlesToIdsFile = new File(this.dir 
+//					+ IndexHandler.titlesToIdsFileName
+//					+ IndexHandler.fileExtension);
+//			scanner = new Scanner(titlesToIdsFile);
+//			scanner.useDelimiter("\t");
+//			while (scanner.hasNext())
+//				if (!firstPart.isEmpty()) {
+//					this.getTitlesToIds().put(firstPart, Long.parseLong(scanner.next()));
+//					firstPart = "";
+//				} else {
+//					firstPart = scanner.next();
+//				}
+//
+//			System.out.println("title-id-mapping complete");
+//			scanner.close();
+
+			
 		} catch (IOException e) {
 			e.printStackTrace();
 		}

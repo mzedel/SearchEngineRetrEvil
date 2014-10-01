@@ -16,7 +16,6 @@ import java.util.Iterator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-// Don't change this file! ( Just fixed the code's format and the path :) )
 public abstract class SearchEngine {
 
 	String baseDirectory = "/Users/tim/Documents/Studium/Master/SoSe 2014/Information Retrieval/Engine/wikipedia/";
@@ -122,6 +121,7 @@ public abstract class SearchEngine {
 	}
 
 	synchronized void log(String line) {
+		System.out.println(">>> " + line);
 		try {
 			FileWriter fw = new FileWriter(this.logFile,true);
 			BufferedWriter out = new BufferedWriter(fw);

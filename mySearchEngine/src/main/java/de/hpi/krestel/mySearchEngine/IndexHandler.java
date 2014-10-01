@@ -13,6 +13,7 @@ import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.RandomAccessFile;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -357,7 +358,7 @@ class IndexHandler {
 			this.textsSeeklist.put(id, raTextsFile.getFilePointer());
 
 			// write clean text of the document to the file (2 bytes per char)
-			raTextsFile.write(cleanPageText(text).getBytes());
+			raTextsFile.write(cleanPageText(text).getBytes(Charset.forName("UTF-8")));
 
 			// close the file
 			raTextsFile.close();
@@ -1260,34 +1261,36 @@ class IndexHandler {
 		}
 
 		// read the original text of the document from the texts file
-		StringBuilder builder = new StringBuilder();
+		String text = null;
 		try {
 			// get the file
 			File textsFile = new File(this.dir + IndexHandler.textsFileName + IndexHandler.fileExtension);
 			RandomAccessFile raTextsFile = new RandomAccessFile(textsFile, "r");
 
 			/* 
-			 * read the file until the text is finished (i.e., until the 
-			 * first '\t' or end of file
+			 * read the text (or its beginning, which is enough for the purpose
+			 * of making a snippet)
 			 */
 			raTextsFile.seek(offset);
-			try {
-				while (true) {
-					String character = String.valueOf((char) raTextsFile.readByte());
-					if (character.equals("\t")) {
-						break;
-					} else {
-						builder.append(character);
-					}
-				}
-			} catch (EOFException e) {
-				// continue
+			
+			long maxLength = raTextsFile.length() - offset;
+			int textSize = 10000 <= maxLength ? 10000 : ((int) maxLength);
+			
+			byte[] textBytes = new byte[textSize];
+			// read the bytes
+			raTextsFile.readFully(textBytes);
+			// create a string from the bytes
+			text = new String(textBytes, "UTF-8");
+			// limit the string, if a delimiter is found
+			int delimiterIndex = text.indexOf("\t");
+			if (delimiterIndex != -1) {
+				text = text.substring(0, delimiterIndex);
 			}
+			
 			raTextsFile.close();
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
-		String text = builder.toString();
 		if (text == null || text.equals("")) {
 			// no text
 			return null;
@@ -1319,7 +1322,6 @@ class IndexHandler {
 
 		/*
 		 * Create a snippet from the text.
-		 * TODO: make sure that UTF-8 works
 		 */
 		int startIndex = 0;
 		int endIndex = 0;

@@ -121,8 +121,8 @@ class IndexHandler {
 		linkingPatterns.add(Pattern.compile("\\[http://de\\.wikipedia\\.org/wiki/([^ :#\\]]+)[^\\]]*\\]"));
 	}
 
-//	private static int THRESHOLD = 128 * 1024 * 1024;
-	private static int THRESHOLD = 160 * 64;
+	private static int THRESHOLD = 128 * 1024 * 1024;
+//	private static int THRESHOLD = 160 * 64;
 	private static int bufferSize = 8192;
 	private int byteCounter = 0;
 
@@ -487,39 +487,39 @@ class IndexHandler {
 			/*
 			 * write the seeklist of the texts file to a file
 			 */
-			writeStringifiedToFile(this.textsSeekListToString(), this.dir
-					+ IndexHandler.textsSeekListFileName
-					+ IndexHandler.fileExtension);
-			this.textsSeeklist = null;
-
-			/*
-			 * write the id-title-mapping to a file
-			 */
-			writeStringifiedToFile(this.titlesToString(), this.dir 
-					+ IndexHandler.titlesFileName 
-					+ IndexHandler.fileExtension);
-			this.idsToTitles = null;
-			
-			/*
-			 * write the title-id-mapping to a file
-			 */
-			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
-					+ IndexHandler.titlesToIdsFileName 
-					+ IndexHandler.fileExtension);
-			this.titlesToIds = null;
-
-			/*
-			 * merge link index files
-			 */
-			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
-			this.linkIndex = null;
+//			writeStringifiedToFile(this.textsSeekListToString(), this.dir
+//					+ IndexHandler.textsSeekListFileName
+//					+ IndexHandler.fileExtension);
+//			this.textsSeeklist = null;
+//
+//			/*
+//			 * write the id-title-mapping to a file
+//			 */
+//			writeStringifiedToFile(this.titlesToString(), this.dir 
+//					+ IndexHandler.titlesFileName 
+//					+ IndexHandler.fileExtension);
+//			this.idsToTitles = null;
+//			
+//			/*
+//			 * write the title-id-mapping to a file
+//			 */
+//			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
+//					+ IndexHandler.titlesToIdsFileName 
+//					+ IndexHandler.fileExtension);
+//			this.titlesToIds = null;
+//
+//			/*
+//			 * merge link index files
+//			 */
+//			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
+//			this.linkIndex = null;
 			
 			/*
 			 * merge index files
 			 */
 			mergeTempFilesIntoFile(IndexHandler.indexFileName, true);
 
-			deleteTemporaryFiles();
+//			deleteTemporaryFiles();
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -602,7 +602,7 @@ class IndexHandler {
 						slBo.write(term.getBytes());
 						slBo.write("\t".getBytes());
 						slBo.write((this.raIndexFile.getFilePointer() + "").getBytes());
-						slBo.write("\t".getBytes());
+						slBo.write("\n".getBytes());
 					};
 					if (firstLine && fileName.equals(IndexHandler.linkIndexFileName)) {
 						this.bo.write(term.getBytes());
@@ -672,7 +672,7 @@ class IndexHandler {
 					slBo.write(term.getBytes());
 					slBo.write("\t".getBytes());
 					slBo.write((this.raIndexFile.getFilePointer() + "").getBytes());
-					slBo.write("\t".getBytes());
+					slBo.write("\n".getBytes());
 				}; 
 				if (firstLine && fileName.equals(IndexHandler.linkIndexFileName)) {
 					this.bo.write(term.getBytes());
@@ -940,26 +940,15 @@ class IndexHandler {
 					+ IndexHandler.seekListFileName 
 					+ IndexHandler.fileExtension);
 			Reader reader = new InputStreamReader(seekListFile);
-			Reader bread = new BufferedReader(reader, IndexHandler.bufferSize);
-			int r;
+			BufferedReader bread = new BufferedReader(reader, IndexHandler.bufferSize);
 			// set a small buffersize to avoid unnecessary copies of the containing array
-			StringBuilder builder = new StringBuilder(256);
-			while ((r = bread.read()) != -1) {
-				char ch = (char) r;
-				if ('\t' == ch) {
-					if (!firstPart.isEmpty()) {
-						this.seeklist.put(firstPart, Long.parseLong(builder.toString()));
-						firstPart = "";
-						builder.setLength(0);
-					} else {
-//						System.out.println(Runtime.getRuntime().freeMemory() / 1024 / 1024 + 
-//								" of total: " + Runtime.getRuntime().totalMemory() / 1024 / 1024);
-						firstPart = builder.toString();
-						builder.setLength(0);
-					}
-				} else {
-					builder.append(ch);
-				}
+			String line = "";
+			String[] parts = null;
+			while ((line = bread.readLine()) != null) {	
+				parts = line.split("\t");
+				this.seeklist.put(parts[0], Long.parseLong(parts[1]));
+				System.out.println(Runtime.getRuntime().freeMemory() / 1024 / 1024 + 
+					" of total: " + Runtime.getRuntime().totalMemory() / 1024 / 1024);
 			}
 			bread.close();
 			seekListFile.close();

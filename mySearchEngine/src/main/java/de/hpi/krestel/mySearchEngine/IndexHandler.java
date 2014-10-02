@@ -5,14 +5,17 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.EOFException;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.FilenameFilter;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.RandomAccessFile;
+import java.io.Reader;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -47,7 +50,7 @@ import de.hpi.krestel.mySearchEngine.LinkIndex.TitleList;
 class IndexHandler {
 
 	// just to provide a simple way to switch between full index creation and just merging
-	public static final boolean DEV_MODE = true;
+	public static final boolean DEV_MODE = false;
 
 	// name of the file which stores the index
 	private static final String indexFileName = "index";
@@ -491,39 +494,39 @@ class IndexHandler {
 			/*
 			 * write the seeklist of the texts file to a file
 			 */
-			writeStringifiedToFile(this.textsSeekListToString(), this.dir
-					+ IndexHandler.textsSeekListFileName
-					+ IndexHandler.fileExtension);
-			this.textsSeeklist = null;
-
-			/*
-			 * write the id-title-mapping to a file
-			 */
-			writeStringifiedToFile(this.titlesToString(), this.dir 
-					+ IndexHandler.titlesFileName 
-					+ IndexHandler.fileExtension);
-			this.idsToTitles = null;
-			
-			/*
-			 * write the title-id-mapping to a file
-			 */
-			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
-					+ IndexHandler.titlesToIdsFileName 
-					+ IndexHandler.fileExtension);
-			this.titlesToIds = null;
-
-			/*
-			 * merge link index files
-			 */
-			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
-			this.linkIndex = null;
+//			writeStringifiedToFile(this.textsSeekListToString(), this.dir
+//					+ IndexHandler.textsSeekListFileName
+//					+ IndexHandler.fileExtension);
+//			this.textsSeeklist = null;
+//
+//			/*
+//			 * write the id-title-mapping to a file
+//			 */
+//			writeStringifiedToFile(this.titlesToString(), this.dir 
+//					+ IndexHandler.titlesFileName 
+//					+ IndexHandler.fileExtension);
+//			this.idsToTitles = null;
+//			
+//			/*
+//			 * write the title-id-mapping to a file
+//			 */
+//			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
+//					+ IndexHandler.titlesToIdsFileName 
+//					+ IndexHandler.fileExtension);
+//			this.titlesToIds = null;
+//
+//			/*
+//			 * merge link index files
+//			 */
+//			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
+//			this.linkIndex = null;
 			
 			/*
 			 * merge index files
 			 */
 			mergeTempFilesIntoFile(IndexHandler.indexFileName, true);
 
-			deleteTemporaryFiles();
+//			deleteTemporaryFiles();
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -950,20 +953,34 @@ class IndexHandler {
 			scanner.close();
 
 			// load the seek list
-			File seekListFile = new File(this.dir 
+			InputStream seekListFile = new FileInputStream(this.dir 
 					+ IndexHandler.seekListFileName 
 					+ IndexHandler.fileExtension);
-
-			scanner = new Scanner(seekListFile);
-			scanner.useDelimiter("\t");
-			while (scanner.hasNext())
-				if (!firstPart.isEmpty()) {
-					this.parseSeekListFileString(firstPart + "\t" + scanner.next());
-					firstPart = "";
+			Reader reader = new InputStreamReader(seekListFile);
+			Reader bread = new BufferedReader(reader, IndexHandler.bufferSize);
+			int r;
+			// set a small buffersize to avoid unnecessary copies of the containing array
+			StringBuilder builder = new StringBuilder(256);
+			while ((r = bread.read()) != -1) {
+				char ch = (char) r;
+				if ('\t' == ch) {
+					if (!firstPart.isEmpty()) {
+						this.seeklist.put(firstPart, Long.parseLong(builder.toString()));
+						firstPart = "";
+						builder.setLength(0);
+					} else {
+						System.out.println(Runtime.getRuntime().freeMemory() / 1024 / 1024 + 
+								" of total: " + Runtime.getRuntime().totalMemory() / 1024 / 1024);
+						firstPart = builder.toString();
+						builder.setLength(0);
+					}
 				} else {
-					firstPart = scanner.next();
+					builder.append(ch);
 				}
-			scanner.close();
+			}
+			bread.close();
+			seekListFile.close();
+			System.out.println("seeklist complete");
 		} catch (IOException e) {
 			e.printStackTrace();
 		}

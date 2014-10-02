@@ -122,8 +122,8 @@ class IndexHandler {
 		linkingPatterns.add(Pattern.compile("\\[http://de\\.wikipedia\\.org/wiki/([^ :#\\]]+)[^\\]]*\\]"));
 	}
 
-	private static int THRESHOLD = 128 * 1024 * 1024;
-//	private static int THRESHOLD = 160 * 64;
+//	private static int THRESHOLD = 128 * 1024 * 1024;
+	private static int THRESHOLD = 160 * 64;
 	private static int bufferSize = 8192;
 	private int byteCounter = 0;
 
@@ -300,6 +300,7 @@ class IndexHandler {
 		// id - title - mapping
 		this.idsToTitles.put(id, title);
 		this.getTitlesToIds().put(LinkIndex.processTitle(title), id);
+		
 
 		// indexing
 		try {
@@ -312,8 +313,6 @@ class IndexHandler {
 					// add linking to the linkIndex
 					this.getLinkIndex().addLinkingTitle(linkedTitle, title);
 					// if threshold is reached: write part of the index
-//					if (Runtime.getRuntime().totalMemory() > 1500000000 && Runtime.getRuntime().freeMemory() < 200000000)
-//						writeToIndexFile();
 					this.byteCounter += (title.length() + linkedTitle.length());
 					if (this.byteCounter >= THRESHOLD) {
 						writeToIndexFile();
@@ -332,11 +331,6 @@ class IndexHandler {
 				String term = terms.get(position);
 				this.index.addTermOccurrence(term, id, position);
 				// if threshold is reached: write part of the index
-//				if (Runtime.getRuntime().totalMemory() > 1500000000 && Runtime.getRuntime().freeMemory() < 200000000) {
-//					System.out.println("total mem: " + Runtime.getRuntime().totalMemory());
-//					System.out.println("free mem: " + Runtime.getRuntime().freeMemory());
-//					writeToIndexFile();
-//				}
 				this.byteCounter += (term.length() + id.toString().length() + position.toString().length());
 				if (this.byteCounter >= THRESHOLD) {
 					writeToIndexFile();
@@ -494,39 +488,39 @@ class IndexHandler {
 			/*
 			 * write the seeklist of the texts file to a file
 			 */
-//			writeStringifiedToFile(this.textsSeekListToString(), this.dir
-//					+ IndexHandler.textsSeekListFileName
-//					+ IndexHandler.fileExtension);
-//			this.textsSeeklist = null;
-//
-//			/*
-//			 * write the id-title-mapping to a file
-//			 */
-//			writeStringifiedToFile(this.titlesToString(), this.dir 
-//					+ IndexHandler.titlesFileName 
-//					+ IndexHandler.fileExtension);
-//			this.idsToTitles = null;
-//			
-//			/*
-//			 * write the title-id-mapping to a file
-//			 */
-//			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
-//					+ IndexHandler.titlesToIdsFileName 
-//					+ IndexHandler.fileExtension);
-//			this.titlesToIds = null;
-//
-//			/*
-//			 * merge link index files
-//			 */
-//			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
-//			this.linkIndex = null;
+			writeStringifiedToFile(this.textsSeekListToString(), this.dir
+					+ IndexHandler.textsSeekListFileName
+					+ IndexHandler.fileExtension);
+			this.textsSeeklist = null;
+
+			/*
+			 * write the id-title-mapping to a file
+			 */
+			writeStringifiedToFile(this.titlesToString(), this.dir 
+					+ IndexHandler.titlesFileName 
+					+ IndexHandler.fileExtension);
+			this.idsToTitles = null;
+			
+			/*
+			 * write the title-id-mapping to a file
+			 */
+			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
+					+ IndexHandler.titlesToIdsFileName 
+					+ IndexHandler.fileExtension);
+			this.titlesToIds = null;
+
+			/*
+			 * merge link index files
+			 */
+			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
+			this.linkIndex = null;
 			
 			/*
 			 * merge index files
 			 */
 			mergeTempFilesIntoFile(IndexHandler.indexFileName, true);
 
-//			deleteTemporaryFiles();
+			deleteTemporaryFiles();
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -610,7 +604,6 @@ class IndexHandler {
 						slBo.write("\t".getBytes());
 						slBo.write((this.raIndexFile.getFilePointer() + "").getBytes());
 						slBo.write("\t".getBytes());
-//						this.seeklist.put(term, this.raIndexFile.getFilePointer());
 					};
 					if (firstLine && fileName.equals(IndexHandler.linkIndexFileName)) {
 						this.bo.write(term.getBytes());
@@ -681,8 +674,7 @@ class IndexHandler {
 					slBo.write("\t".getBytes());
 					slBo.write((this.raIndexFile.getFilePointer() + "").getBytes());
 					slBo.write("\t".getBytes());
-//					this.seeklist.put(term, this.raIndexFile.getFilePointer());
-				};
+				}; 
 				if (firstLine && fileName.equals(IndexHandler.linkIndexFileName)) {
 					this.bo.write(term.getBytes());
 					this.bo.write(TitleList.colon);
@@ -691,17 +683,9 @@ class IndexHandler {
 				if (termIndex == -1) {
 					term = nextTerm;
 					firstLine = true;
-					this.bo.write("null".getBytes());
-					this.bo.write(TitleList.dot);
 					if (!firstLine && fileName.equals(IndexHandler.linkIndexFileName)) this.bo.write("\n".getBytes());
 					continue;
 				}
-				if (lines[termIndex].contains("."))
-					bo.write(lines[termIndex].substring(1, lines[termIndex].lastIndexOf(".")).getBytes());
-				else
-					bo.write(lines[termIndex].substring(1).getBytes());
-				this.bo.write(TitleList.dot);
-				if (!firstLine && fileName.equals(IndexHandler.linkIndexFileName)) this.bo.write("\n".getBytes());
 			}
 			term = nextTerm;
 			firstLine = true;
@@ -735,7 +719,7 @@ class IndexHandler {
 			FileReader reader = new FileReader(fileEntry);
 			BufferedReader breed = new BufferedReader(reader);
 			fileBeginnings[index] = breed;
-			line = breed.readLine().trim();
+			line = breed.readLine();
 			lineBuffer[index] = line;
 			if (line == null || line.trim().isEmpty()) {
 				breed.close();
@@ -969,8 +953,8 @@ class IndexHandler {
 						firstPart = "";
 						builder.setLength(0);
 					} else {
-						System.out.println(Runtime.getRuntime().freeMemory() / 1024 / 1024 + 
-								" of total: " + Runtime.getRuntime().totalMemory() / 1024 / 1024);
+//						System.out.println(Runtime.getRuntime().freeMemory() / 1024 / 1024 + 
+//								" of total: " + Runtime.getRuntime().totalMemory() / 1024 / 1024);
 						firstPart = builder.toString();
 						builder.setLength(0);
 					}

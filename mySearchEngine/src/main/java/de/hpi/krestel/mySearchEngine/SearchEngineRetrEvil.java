@@ -230,6 +230,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		}
 		
 		// return ranking with titles and snippets
+System.out.println("\t=> " + java.util.Arrays.toString(documentIds.toArray()));
 		return this.createQueryAnswerForDocuments(documentIds, query);
 	}
 	
@@ -516,7 +517,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	}
 	
 	/**
-	 * TODO: strict evaluation? (check if proposed page texts really include the unprocessed phrase)
 	 * Process the query as a phrase query. If the phrase is empty (or missing),
 	 * an empty list of documents is returned.
 	 * @param query the query text

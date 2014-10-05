@@ -1,5 +1,6 @@
 package de.hpi.krestel.mySearchEngine;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -14,10 +15,16 @@ import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.ObjectInput;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutput;
+import java.io.ObjectOutputStream;
+import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.io.Reader;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -194,7 +201,7 @@ class IndexHandler {
 
 		this.setLinkIndex(new LinkIndex());
 
-		this.seeklist = new TreeMap<String, Long>();
+		this.seeklist = new HashMap<String, Long>();
 		this.textsSeeklist = new TreeMap<Long, Long>();
 		this.idsToTitles = new TreeMap<Long, String>();
 		this.setTitlesToIds(new TreeMap<String, Long>());
@@ -556,16 +563,17 @@ class IndexHandler {
 		this.bo = new BufferedOutputStream(this.fos, IndexHandler.bufferSize);
 		File[] filesInFolder = directory.listFiles(filter);
 		int fileCount = filesInFolder.length;
-		BufferedOutputStream slBo = null;
-		RandomAccessFile seeklistFile = null;
-		FileOutputStream foss = null;
+		
+		OutputStream seeklistFile = null;
+		OutputStream foss = null;
+		ObjectOutput slBo = null;
 		if (fileName.equals(IndexHandler.indexFileName)) {
 			File le = new File(this.dir
 					+ IndexHandler.seekListFileName
-					+ IndexHandler.fileExtension);
-			seeklistFile = new RandomAccessFile(le, "rw");
-			foss = new FileOutputStream(seeklistFile.getFD());
-			slBo = new BufferedOutputStream(foss, IndexHandler.bufferSize);
+					+ ".ser");
+			seeklistFile = new FileOutputStream(le);
+			foss = new BufferedOutputStream(seeklistFile);
+			slBo = new ObjectOutputStream(foss);
 		}
 		BufferedReader[] fileBeginnings = new BufferedReader[fileCount];
 		
@@ -600,10 +608,11 @@ class IndexHandler {
 						bo.write(";".getBytes());
 					if (firstLine && fileName.equals(IndexHandler.indexFileName)) {
 						this.bo.flush(); this.fos.flush();
-						slBo.write(term.getBytes());
-						slBo.write("\t".getBytes());
-						slBo.write((this.raIndexFile.getFilePointer() + "").getBytes());
-						slBo.write("\n".getBytes());
+//						slBo.write(term.getBytes());
+//						slBo.write("\t".getBytes());
+//						slBo.write((this.raIndexFile.getFilePointer() + "").getBytes());
+//						slBo.write("\n".getBytes());
+						this.seeklist.put(term, this.raIndexFile.getFilePointer());
 					};
 					if (firstLine && fileName.equals(IndexHandler.linkIndexFileName)) {
 						this.bo.write(term.getBytes());
@@ -670,10 +679,11 @@ class IndexHandler {
 			} else {
 				if (firstLine && fileName.equals(IndexHandler.indexFileName)) {
 					this.bo.flush(); this.fos.flush();
-					slBo.write(term.getBytes());
-					slBo.write("\t".getBytes());
-					slBo.write((this.raIndexFile.getFilePointer() + "").getBytes());
-					slBo.write("\n".getBytes());
+//					slBo.write(term.getBytes());
+//					slBo.write("\t".getBytes());
+//					slBo.write((this.raIndexFile.getFilePointer() + "").getBytes());
+//					slBo.write("\n".getBytes());
+					this.seeklist.put(term, this.raIndexFile.getFilePointer());
 				}; 
 				if (firstLine && fileName.equals(IndexHandler.linkIndexFileName)) {
 					this.bo.write(term.getBytes());
@@ -698,6 +708,7 @@ class IndexHandler {
 		this.fos.close();
 		this.raIndexFile.close();
 		if (fileName.equals(IndexHandler.indexFileName)) {
+			slBo.writeObject(this.seeklist);
 			slBo.flush();
 			foss.flush();
 			slBo.close();
@@ -939,18 +950,25 @@ class IndexHandler {
 			// load the seek list
 			InputStream seekListFile = new FileInputStream(this.dir 
 					+ IndexHandler.seekListFileName 
-					+ IndexHandler.fileExtension);
-			Reader reader = new InputStreamReader(seekListFile);
-			BufferedReader bread = new BufferedReader(reader, IndexHandler.bufferSize);
-			// set a small buffersize to avoid unnecessary copies of the containing array
-			String line = "";
-			String[] parts = null;
-			while ((line = bread.readLine()) != null) {	
-				parts = line.split("\t");
-				this.seeklist.put(parts[0], Long.parseLong(parts[1]));
-				System.out.println(Runtime.getRuntime().freeMemory() / 1024 / 1024 + 
-					" of total: " + Runtime.getRuntime().totalMemory() / 1024 / 1024);
+					+ ".ser");
+			InputStream reader = new BufferedInputStream(seekListFile);
+			ObjectInput bread = new ObjectInputStream(reader);
+	        try {
+				this.seeklist = (Map<String, Long>)bread.readObject();
+			} catch (ClassNotFoundException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
 			}
+
+			// set a small buffersize to avoid unnecessary copies of the containing array
+//			String line = "";
+//			String[] parts = null;
+//			while ((line = bread.readLine()) != null) {	
+//				parts = line.split("\t");
+//				this.seeklist.put(parts[0], Long.parseLong(parts[1]));
+//				System.out.println(Runtime.getRuntime().freeMemory() / 1024 / 1024 + 
+//					" of total: " + Runtime.getRuntime().totalMemory() / 1024 / 1024);
+//			}
 			bread.close();
 			seekListFile.close();
 			System.out.println("seeklist complete");

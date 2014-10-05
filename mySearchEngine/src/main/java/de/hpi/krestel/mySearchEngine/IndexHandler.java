@@ -1,6 +1,5 @@
 package de.hpi.krestel.mySearchEngine;
 
-import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -15,16 +14,10 @@ import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.ObjectInput;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutput;
-import java.io.ObjectOutputStream;
-import java.io.OutputStream;
+import java.io.LineNumberReader;
 import java.io.RandomAccessFile;
 import java.io.Reader;
-import java.nio.charset.Charset;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -201,7 +194,7 @@ class IndexHandler {
 
 		this.setLinkIndex(new LinkIndex());
 
-		this.seeklist = new HashMap<String, Long>();
+		this.seeklist = new LinkedHashMap<String, Long>();
 		this.textsSeeklist = new TreeMap<Long, Long>();
 		this.idsToTitles = new TreeMap<Long, String>();
 		this.setTitlesToIds(new TreeMap<String, Long>());
@@ -362,7 +355,7 @@ class IndexHandler {
 			this.textsSeeklist.put(id, raTextsFile.getFilePointer());
 
 			// write clean text of the document to the file (2 bytes per char)
-			raTextsFile.write(cleanPageText(text).getBytes(Charset.forName("UTF-8")));
+			raTextsFile.write(cleanPageText(text).getBytes());
 
 			// close the file
 			raTextsFile.close();
@@ -563,17 +556,16 @@ class IndexHandler {
 		this.bo = new BufferedOutputStream(this.fos, IndexHandler.bufferSize);
 		File[] filesInFolder = directory.listFiles(filter);
 		int fileCount = filesInFolder.length;
-		
-		OutputStream seeklistFile = null;
-		OutputStream foss = null;
-		ObjectOutput slBo = null;
+		BufferedOutputStream slBo = null;
+		RandomAccessFile seeklistFile = null;
+		FileOutputStream foss = null;
 		if (fileName.equals(IndexHandler.indexFileName)) {
 			File le = new File(this.dir
 					+ IndexHandler.seekListFileName
-					+ ".ser");
-			seeklistFile = new FileOutputStream(le);
-			foss = new BufferedOutputStream(seeklistFile);
-			slBo = new ObjectOutputStream(foss);
+					+ IndexHandler.fileExtension);
+			seeklistFile = new RandomAccessFile(le, "rw");
+			foss = new FileOutputStream(seeklistFile.getFD());
+			slBo = new BufferedOutputStream(foss, IndexHandler.bufferSize);
 		}
 		BufferedReader[] fileBeginnings = new BufferedReader[fileCount];
 		
@@ -608,11 +600,10 @@ class IndexHandler {
 						bo.write(";".getBytes());
 					if (firstLine && fileName.equals(IndexHandler.indexFileName)) {
 						this.bo.flush(); this.fos.flush();
-//						slBo.write(term.getBytes());
-//						slBo.write("\t".getBytes());
-//						slBo.write((this.raIndexFile.getFilePointer() + "").getBytes());
-//						slBo.write("\n".getBytes());
-						this.seeklist.put(term, this.raIndexFile.getFilePointer());
+						slBo.write(term.getBytes());
+						slBo.write("\t".getBytes());
+						slBo.write((this.raIndexFile.getFilePointer() + "").getBytes());
+						slBo.write("\n".getBytes());
 					};
 					if (firstLine && fileName.equals(IndexHandler.linkIndexFileName)) {
 						this.bo.write(term.getBytes());
@@ -679,11 +670,10 @@ class IndexHandler {
 			} else {
 				if (firstLine && fileName.equals(IndexHandler.indexFileName)) {
 					this.bo.flush(); this.fos.flush();
-//					slBo.write(term.getBytes());
-//					slBo.write("\t".getBytes());
-//					slBo.write((this.raIndexFile.getFilePointer() + "").getBytes());
-//					slBo.write("\n".getBytes());
-					this.seeklist.put(term, this.raIndexFile.getFilePointer());
+					slBo.write(term.getBytes());
+					slBo.write("\t".getBytes());
+					slBo.write((this.raIndexFile.getFilePointer() + "").getBytes());
+					slBo.write("\n".getBytes());
 				}; 
 				if (firstLine && fileName.equals(IndexHandler.linkIndexFileName)) {
 					this.bo.write(term.getBytes());
@@ -708,7 +698,6 @@ class IndexHandler {
 		this.fos.close();
 		this.raIndexFile.close();
 		if (fileName.equals(IndexHandler.indexFileName)) {
-			slBo.writeObject(this.seeklist);
 			slBo.flush();
 			foss.flush();
 			slBo.close();
@@ -900,6 +889,37 @@ class IndexHandler {
 	private void loadIndex() {
 		try {
 			String firstPart = "";
+			// load the seek list
+			String line = "";
+			String[] parts = null;
+			final int limit = 3000000;
+			final int totalLines = 14132487;
+			int lineNumber = 0;
+			System.out.println(",m,");
+			for (int reads = 1; reads <= 5; reads++) {
+				InputStream seekListFile = new FileInputStream(this.dir 
+						+ IndexHandler.seekListFileName 
+						+ IndexHandler.fileExtension);
+				Reader reader = new InputStreamReader(seekListFile);
+				LineNumberReader bread = new LineNumberReader(reader, IndexHandler.bufferSize);
+				bread.setLineNumber(lineNumber);
+				System.out.println("möööp");
+				while ((line = bread.readLine()) != null) {
+					parts = line.split("\t");
+					this.seeklist.put(parts[0], Long.parseLong(parts[1]));
+					System.out.println(Runtime.getRuntime().freeMemory() / 1024 / 1024 + 
+						" of total: " + Runtime.getRuntime().totalMemory() / 1024 / 1024 +
+						" - read lines: " + bread.getLineNumber() + " of total 14132487");
+					lineNumber = bread.getLineNumber();
+					if (lineNumber >= (limit * reads) || lineNumber >= totalLines) break;
+				}
+				bread.close();
+				reader.close();
+				seekListFile.close();
+				if (lineNumber >= totalLines) break;
+			}
+			System.out.println("seeklist complete");
+			
 			// load the seek list of the texts file
 			File textsSeekListFile = new File(this.dir 
 					+ IndexHandler.textsSeekListFileName 
@@ -946,32 +966,7 @@ class IndexHandler {
 				}
 
 			scanner.close();
-
-			// load the seek list
-			InputStream seekListFile = new FileInputStream(this.dir 
-					+ IndexHandler.seekListFileName 
-					+ ".ser");
-			InputStream reader = new BufferedInputStream(seekListFile);
-			ObjectInput bread = new ObjectInputStream(reader);
-	        try {
-				this.seeklist = (Map<String, Long>)bread.readObject();
-			} catch (ClassNotFoundException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
-
-			// set a small buffersize to avoid unnecessary copies of the containing array
-//			String line = "";
-//			String[] parts = null;
-//			while ((line = bread.readLine()) != null) {	
-//				parts = line.split("\t");
-//				this.seeklist.put(parts[0], Long.parseLong(parts[1]));
-//				System.out.println(Runtime.getRuntime().freeMemory() / 1024 / 1024 + 
-//					" of total: " + Runtime.getRuntime().totalMemory() / 1024 / 1024);
-//			}
-			bread.close();
-			seekListFile.close();
-			System.out.println("seeklist complete");
+			System.out.println("parsing done");
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -1269,36 +1264,34 @@ class IndexHandler {
 		}
 
 		// read the original text of the document from the texts file
-		String text = null;
+		StringBuilder builder = new StringBuilder();
 		try {
 			// get the file
 			File textsFile = new File(this.dir + IndexHandler.textsFileName + IndexHandler.fileExtension);
 			RandomAccessFile raTextsFile = new RandomAccessFile(textsFile, "r");
 
 			/* 
-			 * read the text (or its beginning, which is enough for the purpose
-			 * of making a snippet)
+			 * read the file until the text is finished (i.e., until the 
+			 * first '\t' or end of file
 			 */
 			raTextsFile.seek(offset);
-			
-			long maxLength = raTextsFile.length() - offset;
-			int textSize = 10000 <= maxLength ? 10000 : ((int) maxLength);
-			
-			byte[] textBytes = new byte[textSize];
-			// read the bytes
-			raTextsFile.readFully(textBytes);
-			// create a string from the bytes
-			text = new String(textBytes, "UTF-8");
-			// limit the string, if a delimiter is found
-			int delimiterIndex = text.indexOf("\t");
-			if (delimiterIndex != -1) {
-				text = text.substring(0, delimiterIndex);
+			try {
+				while (true) {
+					String character = String.valueOf((char) raTextsFile.readByte());
+					if (character.equals("\t")) {
+						break;
+					} else {
+						builder.append(character);
+					}
+				}
+			} catch (EOFException e) {
+				// continue
 			}
-			
 			raTextsFile.close();
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
+		String text = builder.toString();
 		if (text == null || text.equals("")) {
 			// no text
 			return null;
@@ -1330,6 +1323,7 @@ class IndexHandler {
 
 		/*
 		 * Create a snippet from the text.
+		 * TODO: make sure that UTF-8 works
 		 */
 		int startIndex = 0;
 		int endIndex = 0;

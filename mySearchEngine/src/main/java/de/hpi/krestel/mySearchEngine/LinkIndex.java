@@ -28,8 +28,8 @@ class LinkIndex {
 		public static LinkIndex.TitleList createFromIndexString(String string) {
 			LinkIndex.TitleList list = new TitleList(null);
 			
-			// format: title:othertitle,othertitle,othertitle[.]
-			StringTokenizer tok = new StringTokenizer(string, ":,.");
+			// format: title:othertitle;othertitle;othertitle[.]
+			StringTokenizer tok = new StringTokenizer(string, ":;.");
 			boolean firstToken = true;
 			while (tok.hasMoreTokens()) {
 				String token = tok.nextToken();

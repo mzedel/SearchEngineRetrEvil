@@ -24,7 +24,10 @@ import javax.xml.parsers.SAXParserFactory;
 import org.xml.sax.InputSource;
 import org.xml.sax.helpers.DefaultHandler;
 
-/* 
+/* TODO: Einlesen der Seeklist verbessern
+ * TODO: relevance feedback abschwächen
+ * TODO: ggf. keyword queries als phrase queries behandeln und Resultate bevorzugen
+ * 
  * SearchEngineRetrEvil by Manuel Zedel and Tim Sporleder.
  * 
  * Indexing:
@@ -320,7 +323,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		// get all relevant documents
 		Set<Long> documentIds = new TreeSet<Long>();
 		for (String term : terms) {
-			documentIds.addAll(this.indexHandler.readListForTerm(term).getOccurrences().keySet());
+			Index.TermList termList = this.indexHandler.readListForTerm(term);
+			if (termList != null) {
+				documentIds.addAll(termList.getOccurrences().keySet());
+			}
 		}
 		
 		return new ArrayList<Long>(documentIds);
@@ -473,8 +479,10 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			try {
 				List<String> terms = this.indexHandler.processRawText(query);
 				if (terms.size() > 0) {
-					return new ArrayList<Long>(this.indexHandler
-							.readListForTerm(terms.get(0)).getOccurrences().keySet());
+					Index.TermList termList = this.indexHandler.readListForTerm(terms.get(0));
+					if (termList != null) {
+						return new ArrayList<Long>(termList.getOccurrences().keySet());
+					}
 				}
 			} catch (IOException e) {
 				// should not happen
@@ -516,7 +524,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	}
 	
 	/**
-	 * TODO: strict evaluation? (check if proposed page texts really include the unprocessed phrase)
 	 * Process the query as a phrase query. If the phrase is empty (or missing),
 	 * an empty list of documents is returned.
 	 * @param query the query text
@@ -544,7 +551,12 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		// search for the given sequence of processed terms in documents
 		List<Index.TermList> termLists = new ArrayList<Index.TermList>();
 		for (String term : processedPhrase) {
-			termLists.add(this.indexHandler.readListForTerm(term));
+			Index.TermList termList = this.indexHandler.readListForTerm(term);
+			if (termList == null) {
+				// term exists, but fetching was aborted => do not consider
+				continue;
+			}
+			termLists.add(termList);
 		}
 		Set<Long> documentIds = new TreeSet<Long>();
 		for (Entry<Long, Collection<Integer>> entry : termLists.get(0).getOccurrences().entrySet()) {
@@ -663,10 +675,23 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			String booleanQuery = booleanQueryBuilder.toString();
 			
 			List<Long> potentialDocumentIds = null;
-			if (booleanQuery.length() > 0) {
+			if (booleanQuery != null && booleanQuery.length() > 0) {
 				// limit the result set to the set yielded by the boolean query
 				potentialDocumentIds = this.processBooleanQuery(booleanQuery);
-				
+				if (query.equals("")) {
+					// no keywords left => return the result of the boolean query
+					if (potentialDocumentIds != null) {
+						if (potentialDocumentIds.size() <= topK) {
+							return potentialDocumentIds;
+						} else {
+							for (int i = 0; i < topK; i++) {
+								result.add(potentialDocumentIds.get(i));
+							}
+							return result;
+						}
+					}
+					return result;
+				}
 			} // else: no limitiation
 			
 			if (prf == 0) {
@@ -790,8 +815,14 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			if (termListMap.containsKey(term)) {
 				continue;	// already got the list for this term
 			}
-			// add (term, termList) to the map; termList is never null
-			termListMap.put(term, this.indexHandler.readListForTerm(term));
+			// add (term, termList) to the map
+			Index.TermList termList = this.indexHandler.readListForTerm(term);
+			if (termList != null) {
+				termListMap.put(term, termList);
+			} else {
+				// if the loading is aborted (too many entries), add an empty list
+				termListMap.put(term, new Index.TermList());
+			}
 		}
 
 		/*
@@ -802,7 +833,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		 */
 		Map<String, Integer> termDocumentCountMap = new HashMap<String, Integer>();
 		Map<String, Integer> termQueryFrequency = new HashMap<String, Integer>();
-		Set<Long> documentIds = new HashSet<Long>();	// HashSet: no repetitions
+		Set<Long> documentIds = new TreeSet<Long>();	// no repetitions
 		for (String term : terms) {
 			// increment frequency
 			Integer frequency = termQueryFrequency.get(term);	// null if not set yet
@@ -837,6 +868,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 
 		// Rank each document which contains at least one query term
 		Map<Double, Long> scoreDocumentMap = new TreeMap<Double, Long>();	// ordered by score
+		boolean scoreListFull = false;
 		for (Long documentId : documentIds) {
 			Double score = 0.0;	// score of this document
 			
@@ -885,11 +917,24 @@ public class SearchEngineRetrEvil extends SearchEngine {
 
 			// make sure that the scores are unique to avoid problems with the map
 			while (scoreDocumentMap.containsKey(score)) {
-				score -= 1e-10;	// slightly decrease the score (this is sloppy, but works)
+				score -= 1e-10 * Math.random();	// slightly decrease the score (this is sloppy, but works)
 			}
 
-			// store the score
-			scoreDocumentMap.put(score, documentId);
+			// store the score - only keep the topK best scores
+			if (scoreListFull) {
+				// get the lowest score (there must be at least 1 score already)
+				double lowestScore = (Double) scoreDocumentMap.keySet().toArray()[0];
+				// if the new score is greater, drop the lowest
+				scoreDocumentMap.remove(lowestScore);
+				// add the new score (TreeMap sorts automatically)
+				scoreDocumentMap.put(score, documentId);
+			} else {
+				// keep adding documents until topK is reached
+				scoreDocumentMap.put(score, documentId);
+				if (scoreDocumentMap.keySet().size() >= topK) {
+					scoreListFull = true;
+				}
+			}
 		}
 
 		// get the scores in descending order

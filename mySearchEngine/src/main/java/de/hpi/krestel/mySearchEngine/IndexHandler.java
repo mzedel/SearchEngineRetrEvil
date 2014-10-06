@@ -488,32 +488,32 @@ class IndexHandler {
 			/*
 			 * write the seeklist of the texts file to a file
 			 */
-//			writeStringifiedToFile(this.textsSeekListToString(), this.dir
-//					+ IndexHandler.textsSeekListFileName
-//					+ IndexHandler.fileExtension);
-//			this.textsSeeklist = null;
-//
-//			/*
-//			 * write the id-title-mapping to a file
-//			 */
-//			writeStringifiedToFile(this.titlesToString(), this.dir 
-//					+ IndexHandler.titlesFileName 
-//					+ IndexHandler.fileExtension);
-//			this.idsToTitles = null;
-//			
-//			/*
-//			 * write the title-id-mapping to a file
-//			 */
-//			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
-//					+ IndexHandler.titlesToIdsFileName 
-//					+ IndexHandler.fileExtension);
-//			this.titlesToIds = null;
-//
-//			/*
-//			 * merge link index files
-//			 */
-//			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
-//			this.linkIndex = null;
+			writeStringifiedToFile(this.textsSeekListToString(), this.dir
+					+ IndexHandler.textsSeekListFileName
+					+ IndexHandler.fileExtension);
+			this.textsSeeklist = null;
+
+			/*
+			 * write the id-title-mapping to a file
+			 */
+			writeStringifiedToFile(this.titlesToString(), this.dir 
+					+ IndexHandler.titlesFileName 
+					+ IndexHandler.fileExtension);
+			this.idsToTitles = null;
+			
+			/*
+			 * write the title-id-mapping to a file
+			 */
+			writeStringifiedToFile(this.titlesToIdsToString(), this.dir 
+					+ IndexHandler.titlesToIdsFileName 
+					+ IndexHandler.fileExtension);
+			this.titlesToIds = null;
+
+			/*
+			 * merge link index files
+			 */
+			mergeTempFilesIntoFile(IndexHandler.linkIndexFileName, false);
+			this.linkIndex = null;
 			
 			/*
 			 * merge index files
@@ -526,6 +526,7 @@ class IndexHandler {
 		}
 	}
 
+	@SuppressWarnings("unused")
 	private void deleteTemporaryFiles() {
 		FilenameFilter filter = new FilenameFilter() {
 			@Override
@@ -631,7 +632,11 @@ class IndexHandler {
 					} else {
 						currentLine = currentLine.trim();
 						lineBuffer[index] = currentLine;
-						if (currentLine.isEmpty()) continue;
+						if (currentLine.isEmpty()) {
+							terms[index] = "";
+							lines[index] = "";
+							continue;
+						}
 						terms[index] = conditionalBase64Converter(currentLine, base64Encoded).trim();
 						if (currentLine.contains(":"))
 							lines[index] = currentLine.substring(currentLine.indexOf(":")).trim();
@@ -661,7 +666,11 @@ class IndexHandler {
 					} else {
 						currentLine = currentLine.trim();
 						lineBuffer[winnerSlot] = currentLine;
-						if (currentLine.isEmpty()) continue;
+						if (currentLine.isEmpty()) {
+							terms[winnerSlot] = "";
+							lines[winnerSlot] = "";
+							continue;
+						}
 						terms[winnerSlot] = conditionalBase64Converter(currentLine, base64Encoded).trim();
 						lines[winnerSlot] = currentLine.substring(currentLine.indexOf(":")).trim();
 					}
@@ -800,31 +809,6 @@ class IndexHandler {
 		return file;
 	}
 
-	/** 
-	 * Stringifies the seek list for writing it to a file. Uses the pattern:<br>
-	 * <i>apfel\t0\tbaum\t1608.</i><br>
-	 * (\t are actual tab characters)
-	 * @return a string representation of the seek list
-	 */
-	private String seekListToFile(String filename) {
-		try {
-			FileWriter fos = new FileWriter(filename);
-			BufferedWriter bo = new BufferedWriter(fos, IndexHandler.bufferSize);
-			for (String term : this.seeklist.keySet()) {	// uses iterator
-				bo.write(term);
-				bo.write('\t');
-				bo.write(this.seeklist.get(term) + "");
-				bo.write('\t');
-			}
-			bo.close();
-			fos.close();
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
-		return "";
-		//			return result.toString();
-	}
-
 	/**
 	 * Stringifies the seek list of the texts file for writing it to a file.
 	 * Use the pattern like in {@link #seekListToString()}.
@@ -897,7 +881,6 @@ class IndexHandler {
 			final int limit = 3000000;
 			final int totalLines = 14132487;
 			int lineNumber = 0;
-			System.out.println(",m,");
 			for (int reads = 1; reads <= 5; reads++) {
 				InputStream seekListFile = new FileInputStream(this.dir 
 						+ IndexHandler.seekListFileName 
@@ -905,13 +888,9 @@ class IndexHandler {
 				Reader reader = new InputStreamReader(seekListFile);
 				LineNumberReader bread = new LineNumberReader(reader, IndexHandler.bufferSize);
 				bread.setLineNumber(lineNumber);
-				System.out.println("möööp");
 				while ((line = bread.readLine()) != null) {
 					parts = line.split("\t");
 					this.seeklist.put(parts[0], Long.parseLong(parts[1]));
-					System.out.println(Runtime.getRuntime().freeMemory() / 1024 / 1024 + 
-						" of total: " + Runtime.getRuntime().totalMemory() / 1024 / 1024 +
-						" - read lines: " + bread.getLineNumber() + " of total 14132487");
 					lineNumber = bread.getLineNumber();
 					if (lineNumber >= (limit * reads) || lineNumber >= totalLines) break;
 				}
@@ -972,16 +951,6 @@ class IndexHandler {
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
-	}
-
-	/**
-	 * Construct a seek list from the read string. If an exception occurs,
-	 * print it, but proceed.
-	 * @param string seek list file string
-	 */
-	private void parseSeekListFileString(String string) {
-		String[] parts = string.split("\t");
-		this.seeklist.put(parts[0], Long.parseLong(parts[1]));
 	}
 
 	/**

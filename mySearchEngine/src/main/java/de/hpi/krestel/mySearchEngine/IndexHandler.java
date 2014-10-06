@@ -53,6 +53,9 @@ class IndexHandler {
 	public static final boolean DEV_MODE = false;
 	// if SEEKLIST_BINARY_SEARCH is true, the seeklist is not loaded into memory but searched for each term
 	private static final boolean SEEKLIST_BINARY_SEARCH = true;
+	
+	// number of documents in which a term has to appear to be insignificant
+	private static final int TERM_INSIGNIFICANCE_THRESHOLD = 100000;
 
 	// name of the file which stores the index
 	private static final String indexFileName = "index";
@@ -1152,8 +1155,9 @@ class IndexHandler {
 							}
 						} else {
 							// term > readTerm, go right
+							offset = raSeekListFile.getFilePointer();
 							leftOffset = offset;
-							offset = raIndexFile.getFilePointer() + (rightOffset - offset) / 2;
+							offset += (rightOffset - offset) / 2;
 							if (offset > (raSeekListFile.length() - 1)) {
 								break;
 							}
@@ -1186,12 +1190,15 @@ class IndexHandler {
 	 * Use the seek list to read the inverted list of the given term from
 	 * the index file.
 	 * If the term (which should be pre-processed) is not found in the 
-	 * seek list, or if an exception occurs, an empty list is returned.
+	 * seek list, or if an exception occurs, an empty list is returned. If the
+	 * term exists, but its list is too long, the loading is aborted and <tt>
+	 * null</tt> is returned.
 	 * For each call to this method, a new TermList is created, so manipulating
 	 * the returned object will not change any internal state of the Index
 	 * or IndexHandler.
 	 * @param term the term
-	 * @return the read TermList
+	 * @return the read TermList or <tt>null</tt>, if the reading was aborted
+	 *   (if the term exists but the list is too large)
 	 */
 	public Index.TermList readListForTerm(String term) {
 		if (term == null) {
@@ -1211,23 +1218,45 @@ class IndexHandler {
 				 * first '.' or end of file
 				 */
 				raIndexFile.seek(offset);
-				StringBuilder builder = new StringBuilder();
+				Index.TermList list = new Index.TermList();
+				StringBuilder builder = new StringBuilder(1000);
+				String[] parts;
+				int documentCount = 0;
 				try {
 					while (true) {
-						char character = (char)raIndexFile.read();
-						builder.append(character);
-						if (("" + character).equals(".")) {
-							break;
+						char character = (char) raIndexFile.read();
+						if (String.valueOf(character).equals(".") || String.valueOf(character).equals(";")) {
+							documentCount++;
+							if (documentCount >= IndexHandler.TERM_INSIGNIFICANCE_THRESHOLD) {
+								// term appears in too many documents => abort
+								raIndexFile.close();
+								return null;
+							}
+							// add occurrences within one document to term list
+							parts = builder.toString().split("[:,]");
+							builder = new StringBuilder(1000);
+							if (parts.length >= 2) {
+								try {
+									long documentId = Long.parseLong(parts[0]);
+									for (int i = 1; i < parts.length; i++) {
+										list.addOccurrence(documentId, Integer.parseInt(parts[i]));
+									}
+								} catch (NumberFormatException e) {
+									e.printStackTrace();
+								}
+							}
+							if (String.valueOf(character).equals(".")) {
+								// term list finished
+								break;
+							}
+						} else {
+							builder.append(character);
 						}
 					}
 				} catch (EOFException e) {
 					// continue
 				}
 				raIndexFile.close();
-
-				new Index.TermList();
-				// create the TermList from the string
-				Index.TermList list = Index.TermList.createFromIndexString(builder.toString());
 
 				return list;
 			} catch (IOException e) {
@@ -1286,8 +1315,9 @@ class IndexHandler {
 						}
 					} else {
 						// processedTitle > listTitle, go right
+						offset = raIndexFile.getFilePointer();
 						leftOffset = offset;
-						offset = raIndexFile.getFilePointer() + (rightOffset - offset) / 2;
+						offset += (rightOffset - offset) / 2;
 						if (offset > (raIndexFile.length() - 1)) {
 							break;
 						}

@@ -612,7 +612,7 @@ class IndexHandler {
 					bo.write(lines[index].substring(1, lines[index].lastIndexOf(".")).getBytes());
 					firstLine = false;
 					currentLine = fileBeginnings[index].readLine();
-					if (currentLine == null || currentLine.trim().isEmpty()) {
+					if (currentLine == null) {
 						fileBeginnings[index].close();
 						fileBeginnings[index] = null;
 						terms[index] = null;
@@ -629,8 +629,9 @@ class IndexHandler {
 						}
 						
 					} else {
-						currentLine = currentLine.trim(); 
+						currentLine = currentLine.trim();
 						lineBuffer[index] = currentLine;
+						if (currentLine.isEmpty()) continue;
 						terms[index] = conditionalBase64Converter(currentLine, base64Encoded).trim();
 						if (currentLine.contains(":"))
 							lines[index] = currentLine.substring(currentLine.indexOf(":")).trim();
@@ -651,7 +652,7 @@ class IndexHandler {
 				if (winnerSlot == -1) break;
 				if (fileBeginnings[winnerSlot] != null) {
 					currentLine = fileBeginnings[winnerSlot].readLine();
-					if (currentLine == null || currentLine.trim().isEmpty()) {
+					if (currentLine == null) {
 						fileBeginnings[winnerSlot].close();
 						fileBeginnings[winnerSlot] = null;
 						lines[winnerSlot] = null;
@@ -660,6 +661,7 @@ class IndexHandler {
 					} else {
 						currentLine = currentLine.trim();
 						lineBuffer[winnerSlot] = currentLine;
+						if (currentLine.isEmpty()) continue;
 						terms[winnerSlot] = conditionalBase64Converter(currentLine, base64Encoded).trim();
 						lines[winnerSlot] = currentLine.substring(currentLine.indexOf(":")).trim();
 					}

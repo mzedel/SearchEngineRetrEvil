@@ -1361,36 +1361,51 @@ class IndexHandler {
 				Index.TermList list = new Index.TermList();
 				StringBuilder builder = new StringBuilder(1000);
 				String[] parts;
+				byte[] readBuffer = new byte[1000000];
+				int numberRead = 0;
+				String readString;
+				String rest = "";
 				int documentCount = 0;
 				try {
-					while (true) {
-						char character = (char) raIndexFile.read();
-						if (String.valueOf(character).equals(".") || String.valueOf(character).equals(";")) {
-							// add occurrences within one document to term list
-							parts = builder.toString().split("[:,]");
-							builder = new StringBuilder(1000);
-							if (parts.length >= 2) {
-								try {
-									long documentId = Long.parseLong(parts[0]);
-									for (int i = 1; i < parts.length; i++) {
-										list.addOccurrence(documentId, Integer.parseInt(parts[i]));
+					outer: while (true) {
+						numberRead = raIndexFile.read(readBuffer);
+						if (numberRead == -1) {
+							break;	// should not happen
+						}
+						readString = new String(readBuffer, 0, numberRead);
+						rest += readString;
+						for (int i = 0; i < rest.length(); i++) {
+							char character = rest.charAt(i);
+							if (String.valueOf(character).equals(".") || String.valueOf(character).equals(";")) {
+								// add occurrences within one document to term list
+								parts = builder.toString().split("[:,]");
+								builder = new StringBuilder(1000);
+								if (parts.length >= 2) {
+									try {
+										long documentId = Long.parseLong(parts[0]);
+										for (int j = 1; j < parts.length; j++) {
+											list.addOccurrence(documentId, Integer.parseInt(parts[j]));
+										}
+									} catch (NumberFormatException e) {
+										e.printStackTrace();
 									}
-								} catch (NumberFormatException e) {
-									e.printStackTrace();
 								}
+								if (String.valueOf(character).equals(".")) {
+									// term list finished
+									break outer;
+								}
+								documentCount++;
+								if (documentCount >= IndexHandler.TERM_INSIGNIFICANCE_THRESHOLD) {
+									// term appears in too many documents => abort, return incomplete list
+									raIndexFile.close();
+									return allowNull ? null : list;
+								}
+							} else {
+								builder.append(character);
 							}
-							if (String.valueOf(character).equals(".")) {
-								// term list finished
-								break;
+							if (i == (rest.length() - 1)) {
+								rest = rest.substring(rest.lastIndexOf(";"));
 							}
-							documentCount++;
-							if (documentCount >= IndexHandler.TERM_INSIGNIFICANCE_THRESHOLD) {
-								// term appears in too many documents => abort, return incomplete list
-								raIndexFile.close();
-								return allowNull ? null : list;
-							}
-						} else {
-							builder.append(character);
 						}
 					}
 				} catch (EOFException e) {

@@ -64,7 +64,7 @@ class LinkIndex {
 
 		// format: title:othertitle,othertitle,othertitle.\n
 		public void toIndexString(BufferedOutputStream bo) throws IOException {
-			if (title == null || title.isEmpty()) return;
+			if (title == null || title.isEmpty() || titles.isEmpty()) return;
 			// write title
 			bo.write(title.getBytes());
 			bo.write(colon);
@@ -104,7 +104,7 @@ class LinkIndex {
 	}
 	
 	public static String processTitle(String title) {
-		return title.toLowerCase().replaceAll("[ .:,;-]", "");
+		return title.trim().toLowerCase().replaceAll("[ .:,;-]", "");
 	}
 	
 	private LinkIndex.TitleList getListForTitle(String processedTitle) {

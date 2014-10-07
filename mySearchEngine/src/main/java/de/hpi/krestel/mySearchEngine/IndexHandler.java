@@ -623,7 +623,7 @@ class IndexHandler {
 					bo.write(lines[index].substring(1, lines[index].lastIndexOf(".")).getBytes());
 					firstLine = false;
 					currentLine = fileBeginnings[index].readLine();
-					if (currentLine == null || currentLine.trim().isEmpty()) {
+					if (currentLine == null) {
 						fileBeginnings[index].close();
 						fileBeginnings[index] = null;
 						terms[index] = null;
@@ -640,8 +640,13 @@ class IndexHandler {
 						}
 						
 					} else {
-						currentLine = currentLine.trim(); 
+						currentLine = currentLine.trim();
 						lineBuffer[index] = currentLine;
+						if (currentLine.isEmpty()) {
+							terms[index] = "";
+							lines[index] = "";
+							continue;
+						}
 						terms[index] = conditionalBase64Converter(currentLine, base64Encoded).trim();
 						if (currentLine.contains(":"))
 							lines[index] = currentLine.substring(currentLine.indexOf(":")).trim();
@@ -662,7 +667,7 @@ class IndexHandler {
 				if (winnerSlot == -1) break;
 				if (fileBeginnings[winnerSlot] != null) {
 					currentLine = fileBeginnings[winnerSlot].readLine();
-					if (currentLine == null || currentLine.trim().isEmpty()) {
+					if (currentLine == null) {
 						fileBeginnings[winnerSlot].close();
 						fileBeginnings[winnerSlot] = null;
 						lines[winnerSlot] = null;
@@ -671,6 +676,11 @@ class IndexHandler {
 					} else {
 						currentLine = currentLine.trim();
 						lineBuffer[winnerSlot] = currentLine;
+						if (currentLine.isEmpty()) {
+							terms[winnerSlot] = "";
+							lines[winnerSlot] = "";
+							continue;
+						}
 						terms[winnerSlot] = conditionalBase64Converter(currentLine, base64Encoded).trim();
 						lines[winnerSlot] = currentLine.substring(currentLine.indexOf(":")).trim();
 					}
@@ -809,34 +819,6 @@ class IndexHandler {
 			}
 		}
 		return file;
-	}
-
-	/** 
-	 * Stringifies the seek list for writing it to a file. Uses the pattern:<br>
-	 * <i>apfel\t0\tbaum\t1608.</i><br>
-	 * (\t are actual tab characters).<br>
-	 * <b>This is outdated.</b> The seek list is now written while writing the
-	 * merged index.
-	 * @return a string representation of the seek list
-	 */
-	@SuppressWarnings("unused")
-	private String seekListToFile(String filename) {
-		try {
-			FileWriter fos = new FileWriter(filename);
-			BufferedWriter bo = new BufferedWriter(fos, IndexHandler.bufferSize);
-			for (String term : this.seeklist.keySet()) {	// uses iterator
-				bo.write(term);
-				bo.write('\t');
-				bo.write(this.seeklist.get(term) + "");
-				bo.write('\t');
-			}
-			bo.close();
-			fos.close();
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
-		return "";
-		//			return result.toString();
 	}
 
 	/**
@@ -995,18 +977,6 @@ class IndexHandler {
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
-	}
-
-	/**
-	 * Construct a seek list from the read string. If an exception occurs,
-	 * print it, but proceed.<br>
-	 * <b>This is outdated.</b>The seeklist is now read in other ways.
-	 * @param string seek list file string
-	 */
-	@SuppressWarnings("unused")
-	private void parseSeekListFileString(String string) {
-		String[] parts = string.split("\t");
-		this.seeklist.put(parts[0], Long.parseLong(parts[1]));
 	}
 
 	/**

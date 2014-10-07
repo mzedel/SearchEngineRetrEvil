@@ -690,6 +690,13 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			 */
 			query = removeBooleanOperators(query);
 			
+			// try to execute the query as a phrase query
+			String phraseQuery = query.replaceAll("[\"'*]", "");
+			List<Long> phraseQueryResults = this.processPhraseQuery("\"" + phraseQuery + "\"");
+			if (phraseQueryResults.size() >= topK) {
+				return phraseQueryResults.subList(0, topK);
+			}
+			
 			List<String> terms = this.indexHandler.processRawText(query);
 			
 			StringBuilder booleanQueryBuilder = new StringBuilder(100);
@@ -736,6 +743,9 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				// reevaluate the expanded query and get the topK most relevant documents
 				result = this.processInnerBM25Query(terms, topK, potentialDocumentIds);
 			}
+			
+			phraseQueryResults.addAll(result);
+			result = phraseQueryResults.subList(0, topK);
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -832,7 +842,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				continue;	// already got the list for this term
 			}
 			// add (term, termList) to the map
-			Index.TermList termList = this.indexHandler.readListForTerm(term, false);
+			Index.TermList termList = this.indexHandler.readListForTerm(term, true);
 			if (termList != null) {
 				termListMap.put(term, termList);
 			} else {

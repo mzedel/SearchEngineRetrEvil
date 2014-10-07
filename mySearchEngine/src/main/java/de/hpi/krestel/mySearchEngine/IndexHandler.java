@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Scanner;
 import java.util.StringTokenizer;
 import java.util.TreeMap;
+import java.util.Map.Entry;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -53,13 +54,12 @@ class IndexHandler {
 	public static final boolean DEV_MODE = false;
 	/* 
 	 * if SEEKLIST_BINARY_SEARCH is true, the seeklist is not loaded into memory 
-	 * but searched for each term; note: prefix queries will not work with this,
-	 * so this is just for testing the idea
+	 * but searched for each term
 	 */
-	private static final boolean SEEKLIST_BINARY_SEARCH = false;
+	private static final boolean SEEKLIST_BINARY_SEARCH = true;
 	
 	// number of documents in which a term has to appear to be insignificant
-	private static final int TERM_INSIGNIFICANCE_THRESHOLD = 100000;
+	protected static final int TERM_INSIGNIFICANCE_THRESHOLD = 100000;
 
 	// name of the file which stores the index
 	private static final String indexFileName = "index";
@@ -904,37 +904,43 @@ class IndexHandler {
 	 */
 	private void loadIndex() {
 		try {
-			// load the seek list
+			System.out.println("Reading index...");
 			if (!IndexHandler.SEEKLIST_BINARY_SEARCH) {
+				// load the seek list
+				
 				String line = "";
 				String[] parts = null;
-				final int limit = 3000000;
-				final int totalLines = 14132487;
 				int lineNumber = 0;
-				System.out.println(",m,");
-				for (int reads = 1; reads <= 5; reads++) {
-					InputStream seekListFile = new FileInputStream(this.dir 
-							+ IndexHandler.seekListFileName 
-							+ IndexHandler.fileExtension);
-					Reader reader = new InputStreamReader(seekListFile);
-					LineNumberReader bread = new LineNumberReader(reader, IndexHandler.bufferSize);
-					bread.setLineNumber(lineNumber);
-					System.out.println("möööp");
-					while ((line = bread.readLine()) != null) {
-						parts = line.split("\t");
-						this.seeklist.put(parts[0], Long.parseLong(parts[1]));
-						System.out.println(Runtime.getRuntime().freeMemory() / 1024 / 1024 + 
-							" of total: " + Runtime.getRuntime().totalMemory() / 1024 / 1024 +
-							" - read lines: " + bread.getLineNumber() + " of total 14132487");
-						lineNumber = bread.getLineNumber();
-						if (lineNumber >= (limit * reads) || lineNumber >= totalLines) break;
+				int lineCount = 0;
+				
+				InputStream seekListFile = new FileInputStream(this.dir 
+						+ IndexHandler.seekListFileName 
+						+ IndexHandler.fileExtension);
+				Reader reader = new InputStreamReader(seekListFile);
+				LineNumberReader bread = new LineNumberReader(reader, IndexHandler.bufferSize);
+				bread.setLineNumber(lineNumber);
+				while ((line = bread.readLine()) != null) {
+					parts = line.split("\t");
+					this.seeklist.put(parts[0], Long.parseLong(parts[1]));
+					lineNumber = bread.getLineNumber();
+					if (++lineCount % 1000000 == 0) {
+						// print, use new reader (to avoid caching problems)
+						System.out.println("\t" + lineCount + " lines read");
+						bread.close();
+						reader.close();
+						seekListFile = new FileInputStream(this.dir 
+								+ IndexHandler.seekListFileName 
+								+ IndexHandler.fileExtension);
+						reader = new InputStreamReader(seekListFile);
+						bread = new LineNumberReader(reader, IndexHandler.bufferSize);
+						bread.setLineNumber(lineNumber);
 					}
-					bread.close();
-					reader.close();
-					seekListFile.close();
-					if (lineNumber >= totalLines) break;
 				}
-				System.out.println("seeklist complete");
+				bread.close();
+				reader.close();
+				seekListFile.close();
+				
+				System.out.println("\t" + lineCount + " lines read - seeklist complete");
 			}	// else: use binary search at query time
 			
 			// load the seek list of the texts file
@@ -985,7 +991,7 @@ class IndexHandler {
 
 			scanner.close();
 			
-			System.out.println("parsing done");
+			System.out.println("Complete.");
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -1200,22 +1206,141 @@ class IndexHandler {
 			return this.seeklist.get(term);
 		}
 	}
+	
+	/**
+	 * Get a list of all indexed terms starting with the given prefix.
+	 * @param prefix the prefix
+	 * @return a list of terms which may be empty but not null
+	 */
+	public List<String> getTermsForPrefix(String prefix) {
+		List<String> terms = new ArrayList<String>(100);
+		
+		if (IndexHandler.SEEKLIST_BINARY_SEARCH) {
+			try {
+				// find first encounter of the prefix via binary search
+				File seekListFile = new File(this.dir 
+						+ IndexHandler.seekListFileName 
+						+ IndexHandler.fileExtension);
+				RandomAccessFile raSeekListFile = new RandomAccessFile(seekListFile, "r");
+	
+				long offset = 0;
+				long leftOffset = 0;
+				long rightOffset = raSeekListFile.length() - 1;
+	
+				long maxTries = 1;
+				long counter = rightOffset;
+				while (counter > 0) {
+					counter /= 2;
+					maxTries++;
+				}
+	
+				while (maxTries > 0) {
+					// read the next line
+					String line = raSeekListFile.readLine();
+					// get term and offset
+					String[] parts = line.toString().split("\t");
+					String readTerm = parts[0];
+					// check the term
+					if (readTerm.startsWith(prefix)) {
+						// encounter found; step back to the first term
+
+						// find the first term which does not start with the prefix
+						while (readTerm.startsWith(prefix)) {
+							// step two terms back (first term was just read)
+							raSeekListFile.seek(raSeekListFile.getFilePointer() - 2);
+							while (offset > 0 && ((char) raSeekListFile.read()) != '\n') {
+								offset -= 1;
+								raSeekListFile.seek(offset);
+							}
+							raSeekListFile.seek(raSeekListFile.getFilePointer() - 2);
+							while (offset > 0 && ((char) raSeekListFile.read()) != '\n') {
+								offset -= 1;
+								raSeekListFile.seek(offset);
+							}
+							// read the next line
+							line = raSeekListFile.readLine();
+							// get term
+							parts = line.toString().split("\t");
+							readTerm = parts[0];
+						}
+						// term was just read, so the pointer points to the first correct term now
+						
+						// keep reading terms which start with the prefix
+						do {
+							// read the next line
+							line = raSeekListFile.readLine();
+							// get term
+							parts = line.toString().split("\t");
+							readTerm = parts[0];
+							// add if correct
+							if (readTerm.startsWith(prefix)) {
+								terms.add(readTerm);
+							}
+						} while (readTerm.startsWith(prefix));
+						
+						// finish
+						break;
+					} else {
+						// recalculate offset
+						if (prefix.compareTo(readTerm) < 0) {
+							// prefix < readTerm, go left
+							rightOffset = offset;
+							offset -= (offset - leftOffset) / 2;
+							if (offset < 0) {
+								break;
+							}
+						} else {
+							// prefix > readTerm, go right
+							offset = raSeekListFile.getFilePointer();
+							leftOffset = offset;
+							offset += (rightOffset - offset) / 2;
+							if (offset > (raSeekListFile.length() - 1)) {
+								break;
+							}
+						}
+					}
+					// move the file pointer
+					raSeekListFile.seek(offset);
+					// go to the beginning of the line
+					while (offset > 0 && ((char) raSeekListFile.read()) != '\n') {
+						offset -= 1;
+						raSeekListFile.seek(offset);
+					}
+					// decrease tries
+					maxTries--;
+				}
+	
+				raSeekListFile.close();
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		} else {
+			for (Entry<String, Long> entry : this.seeklist.entrySet()) {
+				if (entry.getKey().startsWith(prefix)) {
+					terms.add(entry.getKey());
+				}
+			}
+		}
+		
+		return terms;
+	}
 
 	/**
 	 * Use the seek list to read the inverted list of the given term from
 	 * the index file.
 	 * If the term (which should be pre-processed) is not found in the 
 	 * seek list, or if an exception occurs, an empty list is returned. If the
-	 * term exists, but its list is too long, the loading is aborted and <tt>
-	 * null</tt> is returned.
+	 * term exists, but its list is too long, the loading is aborted and the
+	 * incomplete list is returned.
 	 * For each call to this method, a new TermList is created, so manipulating
 	 * the returned object will not change any internal state of the Index
 	 * or IndexHandler.
 	 * @param term the term
-	 * @return the read TermList or <tt>null</tt>, if the reading was aborted
-	 *   (if the term exists but the list is too large)
+	 * @param allowNull if <tt>true</tt>, <tt>null</tt> is returned instead of
+	 *   an incomplete list
+	 * @return the read TermList (which may be incomplete)
 	 */
-	public Index.TermList readListForTerm(String term) {
+	public Index.TermList readListForTerm(String term, boolean allowNull) {
 		if (term == null) {
 			throw new IllegalArgumentException("term must not be null!");
 		}
@@ -1241,12 +1366,6 @@ class IndexHandler {
 					while (true) {
 						char character = (char) raIndexFile.read();
 						if (String.valueOf(character).equals(".") || String.valueOf(character).equals(";")) {
-							documentCount++;
-							if (documentCount >= IndexHandler.TERM_INSIGNIFICANCE_THRESHOLD) {
-								// term appears in too many documents => abort
-								raIndexFile.close();
-								return null;
-							}
 							// add occurrences within one document to term list
 							parts = builder.toString().split("[:,]");
 							builder = new StringBuilder(1000);
@@ -1263,6 +1382,12 @@ class IndexHandler {
 							if (String.valueOf(character).equals(".")) {
 								// term list finished
 								break;
+							}
+							documentCount++;
+							if (documentCount >= IndexHandler.TERM_INSIGNIFICANCE_THRESHOLD) {
+								// term appears in too many documents => abort, return incomplete list
+								raIndexFile.close();
+								return allowNull ? null : list;
 							}
 						} else {
 							builder.append(character);
@@ -1381,43 +1506,39 @@ class IndexHandler {
 		if (documentId == null) {
 			return null;
 		}
-
 		// get the file offset of the texts file
 		Long offset = this.textsSeeklist.get(documentId);
 		if (offset == null) {
 			// document is not known
 			return null;
 		}
-
 		// read the original text of the document from the texts file
-		StringBuilder builder = new StringBuilder();
+		String text = null;
 		try {
 			// get the file
 			File textsFile = new File(this.dir + IndexHandler.textsFileName + IndexHandler.fileExtension);
 			RandomAccessFile raTextsFile = new RandomAccessFile(textsFile, "r");
-
-			/* 
-			 * read the file until the text is finished (i.e., until the 
-			 * first '\t' or end of file
+			/*
+			 * read the text (or its beginning, which is enough for the purpose
+			 * of making a snippet)
 			 */
 			raTextsFile.seek(offset);
-			try {
-				while (true) {
-					String character = String.valueOf((char) raTextsFile.readByte());
-					if (character.equals("\t")) {
-						break;
-					} else {
-						builder.append(character);
-					}
-				}
-			} catch (EOFException e) {
-				// continue
+			long maxLength = raTextsFile.length() - offset;
+			int textSize = 10000 <= maxLength ? 10000 : ((int) maxLength);
+			byte[] textBytes = new byte[textSize];
+			// read the bytes
+			raTextsFile.readFully(textBytes);
+			// create a string from the bytes
+			text = new String(textBytes, "UTF-8");
+			// limit the string, if a delimiter is found
+			int delimiterIndex = text.indexOf("\t");
+			if (delimiterIndex != -1) {
+				text = text.substring(0, delimiterIndex);
 			}
 			raTextsFile.close();
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
-		String text = builder.toString();
 		if (text == null || text.equals("")) {
 			// no text
 			return null;

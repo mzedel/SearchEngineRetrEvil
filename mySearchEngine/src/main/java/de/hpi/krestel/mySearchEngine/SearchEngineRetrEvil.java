@@ -24,8 +24,7 @@ import javax.xml.parsers.SAXParserFactory;
 import org.xml.sax.InputSource;
 import org.xml.sax.helpers.DefaultHandler;
 
-/* TODO: Einlesen der Seeklist verbessern
- * TODO: relevance feedback abschwächen
+/*
  * TODO: ggf. keyword queries als phrase queries behandeln und Resultate bevorzugen
  * 
  * SearchEngineRetrEvil by Manuel Zedel and Tim Sporleder.
@@ -313,19 +312,43 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		prefix = prefix.toLowerCase();
 
 		// get all relevant terms
-		List<String> terms = new ArrayList<String>();
-		for (Entry<String, Long> entry : this.indexHandler.getSeeklist().entrySet()) {
-			if (entry.getKey().startsWith(prefix)) {
-				terms.add(entry.getKey());
-			}
-		}
+		List<String> terms = this.indexHandler.getTermsForPrefix(prefix);
 		
 		// get all relevant documents
 		Set<Long> documentIds = new TreeSet<Long>();
+		int countTerms = 0;
 		for (String term : terms) {
-			Index.TermList termList = this.indexHandler.readListForTerm(term);
+			Index.TermList termList = this.indexHandler.readListForTerm(term, false);
 			if (termList != null) {
 				documentIds.addAll(termList.getOccurrences().keySet());
+				if (++countTerms >= 10) {
+					break;	// do not allow too many terms
+				}
+			}
+		}
+		
+		// if nothing is found: do it again with thorough pre-processing
+		if (documentIds.size() == 0) {
+			try {
+				List<String> processed = this.indexHandler.processRawText(prefix);
+	
+				// get all relevant terms
+				terms = this.indexHandler.getTermsForPrefix(processed.get(0));
+				
+				// get all relevant documents
+				documentIds = new TreeSet<Long>();
+				countTerms = 0;
+				for (String term : terms) {
+					Index.TermList termList = this.indexHandler.readListForTerm(term, false);
+					if (termList != null) {
+						documentIds.addAll(termList.getOccurrences().keySet());
+						if (++countTerms >= 10) {
+							break;	// do not allow too many terms
+						}
+					}
+				}
+			} catch (IOException e) {
+				e.printStackTrace();	// should not happen
 			}
 		}
 		
@@ -453,8 +476,8 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					&& (indexAnd == -1 || indexOr > indexAnd) 
 					&& (indexButNot == -1 || indexOr > indexButNot)) {
 				// union
-				List<Long> leftSet = this.processBooleanQuery(query.substring(0, indexAnd));
-				List<Long> rightSet = this.processBooleanQuery(query.substring(indexAnd + OR.length()));
+				List<Long> leftSet = this.processBooleanQuery(query.substring(0, indexOr));
+				List<Long> rightSet = this.processBooleanQuery(query.substring(indexOr + OR.length()));
 				
 				leftSet.addAll(rightSet);
 				return new ArrayList<Long>(new HashSet<Long>(leftSet));	// remove duplicates
@@ -462,8 +485,8 @@ public class SearchEngineRetrEvil extends SearchEngine {
 					&& (indexOr == -1 || indexButNot > indexOr) 
 					&& (indexAnd == -1 || indexButNot > indexAnd)) {
 				// difference
-				List<Long> leftSet = this.processBooleanQuery(query.substring(0, indexAnd));
-				List<Long> rightSet = this.processBooleanQuery(query.substring(indexAnd + AND.length()));
+				List<Long> leftSet = this.processBooleanQuery(query.substring(0, indexButNot));
+				List<Long> rightSet = this.processBooleanQuery(query.substring(indexButNot + BUT_NOT.length()));
 				
 				leftSet.removeAll(rightSet);
 				return new ArrayList<Long>(new HashSet<Long>(leftSet));	// remove duplicates
@@ -479,7 +502,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			try {
 				List<String> terms = this.indexHandler.processRawText(query);
 				if (terms.size() > 0) {
-					Index.TermList termList = this.indexHandler.readListForTerm(terms.get(0));
+					Index.TermList termList = this.indexHandler.readListForTerm(terms.get(0), false);
 					if (termList != null) {
 						return new ArrayList<Long>(termList.getOccurrences().keySet());
 					}
@@ -519,7 +542,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 			}
 		}
 		
-		// get the snippets of the documents linking to the title
 		return documentIds;
 	}
 	
@@ -551,7 +573,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		// search for the given sequence of processed terms in documents
 		List<Index.TermList> termLists = new ArrayList<Index.TermList>();
 		for (String term : processedPhrase) {
-			Index.TermList termList = this.indexHandler.readListForTerm(term);
+			Index.TermList termList = this.indexHandler.readListForTerm(term, true);
 			if (termList == null) {
 				// term exists, but fetching was aborted => do not consider
 				continue;
@@ -792,20 +814,14 @@ public class SearchEngineRetrEvil extends SearchEngine {
 	/**
 	 * Helper method to perform the actual BM25 query, see 
 	 * {@link #processKeywordQuery(String, int, int)}.
-	 * @param potentialDocumentIds if this is <tt>null</tt>, the query is evaluated
-	 *   as usual. Otherwise, this list limits the result set (i.e., the result set
-	 *   must be a subset of the given list).
+	 * @param potentialDocumentIds list of documents which may be used during
+	 *   the scoring
 	 */
 	private ArrayList<Long> processInnerBM25Query(List<String> terms, int topK, List<Long> potentialDocumentIds) {
 		ArrayList<Long> result = new ArrayList<Long>();
 
 		// if there are no terms, return an empty result set
 		if (terms.size() == 0) {
-			return result;
-		}
-		
-		// if the list of potential document ids is given, but empty, return an empty result set
-		if (potentialDocumentIds != null && potentialDocumentIds.size() == 0) {
 			return result;
 		}
 
@@ -816,7 +832,7 @@ public class SearchEngineRetrEvil extends SearchEngine {
 				continue;	// already got the list for this term
 			}
 			// add (term, termList) to the map
-			Index.TermList termList = this.indexHandler.readListForTerm(term);
+			Index.TermList termList = this.indexHandler.readListForTerm(term, false);
 			if (termList != null) {
 				termListMap.put(term, termList);
 			} else {
@@ -871,12 +887,6 @@ public class SearchEngineRetrEvil extends SearchEngine {
 		boolean scoreListFull = false;
 		for (Long documentId : documentIds) {
 			Double score = 0.0;	// score of this document
-			
-			// if the result set is limited, only proceed if the ID is allowed
-			if (potentialDocumentIds != null && !potentialDocumentIds.contains(documentId)) {
-				// not included => skip
-				continue;
-			}
 
 			/*
 			 * Compute K (length normalization parameter).
